@@ -69,18 +69,17 @@ python -m src.mcp_server                                             # コネク
 
 ## Git ブランチ運用
 
-GeneratorsAI と同じ分け方にする。開発は非公開の `100BeautiesLab_ShapeChangerAI-Develop` で進め、公開リポジトリ `100BeautiesLab_ShapeChangerAI` へは `public` ブランチの内容だけを出す。
+GeneratorsAI と同じ分け方にする。開発も公開も、このリポジトリ `100BeautiesLab_ShapeChangerAI` で行う。2026-11-19 に、非公開だった `100BeautiesLab_ShapeChangerAI-Develop` から開発を移した（経緯は [docs/publish.md](docs/publish.md)）。
 
 | ブランチ | 役割 |
 | --- | --- |
 | `main` | 公開とデプロイの基準。エージェントは直接コミット・push しない |
 | `develop` | 開発の統合先。実装、プロンプトや形状の記述の調整、ドキュメントの更新、サブモジュールの追従コミットはここで進める |
-| `public` | 公開用。非公開の履歴とつながない別系統で、`main` と同じ内容を 1 コミットずつ写す。公開リポジトリの `main` へ push する |
 
 - `develop` から `main` への反映は Pull Request で行う。`main` へ直接マージ・push しない。
 - 長くかかる作業は `develop` から `feature/…` や `fix/…` の作業ブランチを切り、終わったら `develop` へ戻す。
 - エージェントは `develop` か作業ブランチにコミットする。push と Pull Request の作成は、ユーザーが依頼したときに行う。
-- 公開リポジトリへの反映は [docs/publish.md](docs/publish.md) の手順で行う。Cloud Run の URL や秘密の値など、公開の場に書かない値はこのリポジトリにも書かない。
+- `develop` も作業ブランチも、push した時点で公開される。Cloud Run の URL や秘密の値など、公開の場に書かない値はコミットに入れない（[docs/publish.md](docs/publish.md)）。
 
 ## サブモジュール運用
 

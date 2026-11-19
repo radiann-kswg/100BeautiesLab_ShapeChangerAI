@@ -73,7 +73,11 @@
 
 - [x] 切り替え後の VM での生成と Drive への保存（2026-11-19）。VM の上で、コネクタのツールと同じ処理（`tools.submit("generate_character", …)`）を直接呼び、14(トヨ) の膨体を 5 段階で生成した（実行 `20261119_044146_gemini_mode03_NumberTales-14`、画像生成 7 回、約 1 分 45 秒）。完成画像 1 枚が、保存先フォルダーに `shapechange_20261119_044146_gemini_mode03_NumberTales-14__stage5_final_mode03_NumberTales-14_01.jpg` として入った。SSH 越しの MCP の通信は、この確認では通していない。
 - [ ] VCC / ALCOM にリスティングを追加してパッケージを入れる操作と、実際のアバターでのセットアップ。
-- [ ] `develop` から `main` への反映。開発側の `main` は古いサブモジュールを指したままで、公開のシェーダーリポジトリからは取得できない。
+- [ ] `develop` から `main` への反映（このリポジトリの Pull Request で行う）。
+
+### 開発もこのリポジトリへ移した（2026-11-19）
+
+公開した同じ日に、開発の場所も非公開の `100BeautiesLab_ShapeChangerAI-Develop` からこのリポジトリの `develop` へ移した。上の表の「それまでの非公開リポジトリは開発用に残す」と、`public` ブランチを通す手順は、このリポジトリについてはやめた（シェーダーは従来どおり `VRCShader_ShapeChange-Develop` で開発する）。`-Develop` は削除する予定。非公開側の履歴は持ってきていない。いまの運用は [publish.md](publish.md)。
 
 ## 保留にしたこと
 
