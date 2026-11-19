@@ -466,8 +466,8 @@ def execute(
 
         best: list[tuple[Subject, str, list[Path]]] = []      # (対象, 観察ブロック, Stage 4 を通った画像)
         prompts: list[str] = []
-        for subject in plan.subjects:
-            root = run_dir / f"char_{subject.character['slug']}" if plan.joint else run_dir
+        for index, subject in enumerate(plan.subjects, start=1):
+            root = run_dir / f"char_{subject.character['slug']}_{index:02d}" if plan.joint else run_dir
             name = subject.character["name_ja"]
             print(f"[INFO] Stage 2: {name} の公式設定画を観察します。")
             design = observe_design(subject.character, subject.references, root / "stage2_reference",

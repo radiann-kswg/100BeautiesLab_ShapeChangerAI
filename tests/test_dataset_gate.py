@@ -15,6 +15,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.utils import dataset  # noqa: E402
+from src.pipeline.natural_parser import parse_request  # noqa: E402
 
 
 def test_gate_is_fail_closed():
@@ -57,6 +58,19 @@ def test_characters_are_found_by_their_index_badge():
     for record in dataset.get_characters():
         found = dataset.find_character(badge=dataset.full_badge(record))
         assert dataset.character_slug(found) == dataset.character_slug(record), dataset.full_badge(record)
+
+
+def test_natural_parser_preserves_the_full_badge_when_building_arguments():
+    original = dataset.find_any("SCG-AW")
+    parsed = parse_request(
+        "SCG-AW を真球に",
+        ask=lambda *_: {"subjects": [{"character": "SCG-AW", "mode": 4}]},
+    )
+    badge = parsed["argv"][parsed["argv"].index("--badge") + 1]
+    work = parsed["argv"][parsed["argv"].index("--work") + 1]
+    resolved = dataset.find_character(badge=badge, work_key=work)
+    assert badge == "SCG-AW"
+    assert resolved["db_key"] == original["db_key"] == "#DB_Regioministrators"
 
 
 def test_denied_and_ambiguous_lookups_do_not_return_records():

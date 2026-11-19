@@ -270,9 +270,10 @@ def test_joint_run_inspects_each_character_then_draws_them_together():
         assert code == 0, out
         (run_dir,) = Path(tmp).iterdir()
         assert run_dir.name.endswith("_gemini_joint_NumberTales-85_NumberTales-73")
-        for slug in ("NumberTales-85", "NumberTales-73"):
-            assert (run_dir / f"char_{slug}" / "stage3_rough" / "rough_02.png").is_file()   # 1 体あたり 2 枚
-            assert (run_dir / f"char_{slug}" / "stage4_correct" / "analysis_log.json").is_file()
+        for index, slug in enumerate(("NumberTales-85", "NumberTales-73"), start=1):
+            root = run_dir / f"char_{slug}_{index:02d}"
+            assert (root / "stage3_rough" / "rough_02.png").is_file()   # 1 体あたり 2 枚
+            assert (root / "stage4_correct" / "analysis_log.json").is_file()
         assert (run_dir / "stage5_final" / "joint_01.png").is_file()
         meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
         prompt = (run_dir / "prompt.txt").read_text(encoding="utf-8")
@@ -285,6 +286,25 @@ def test_joint_run_inspects_each_character_then_draws_them_together():
     for bad in (["--joint", "85:0"], ["--joint", "85:0,73:3", "--layout", "sequence"], ["--joint", "85:0,73:x"]):
         code, _, _ = _run(bad + ["--dry-run"])
         assert code == 2, bad
+
+
+def test_joint_run_keeps_same_slug_characters_in_separate_directories():
+    generator, vision = _FakeGenerator(), _fake_vision([_OK, _OK])
+    vision.measurements = [{}, {}]
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out, _ = _run(["--joint", "SCG-W:4,SCG-AW:4", "--rough-count", "1",
+                             "--out", tmp, "--skip-canva"], generate=generator, vision=vision)
+        assert code == 0, out
+        (run_dir,) = Path(tmp).iterdir()
+        roots = [run_dir / f"char_SinisterChangingGirls-W_{index:02d}" for index in (1, 2)]
+        for root in roots:
+            assert (root / "stage2_reference" / "observation.json").is_file()
+            assert (root / "stage3_rough" / "rough_01.png").is_file()
+            assert (root / "stage4_correct" / "analysis_log.json").is_file()
+        rough_references = generator.calls[-1]["references"][:2]
+        assert all(ref["role"].startswith("検査を通ったラフ: ") for ref in rough_references)
+        assert len({Path(ref["path"]).parent for ref in rough_references}) == 2
+        assert (run_dir / "stage5_final" / "joint_01.png").is_file()
 
 
 def test_joint_synthesis_failure_is_returned_without_using_individual_roughs():
