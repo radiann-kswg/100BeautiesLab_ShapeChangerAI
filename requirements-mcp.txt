@@ -9,3 +9,5 @@ google-api-python-client>=2.100.0
 google-auth>=2.23.0
 # OUTPUT_SINK=gcs のとき（中間画像の置き場。使わなければ不要）
 google-cloud-storage>=2.10.0
+# Canva のトークンの保存（shapechange_refresh_canva_token が Secret Manager に新しい版を足す）
+google-cloud-secret-manager>=2.16.0

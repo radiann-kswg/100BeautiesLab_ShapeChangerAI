@@ -135,6 +135,16 @@ def run_logs(run_id: str) -> dict[str, Any]:
     }
 
 
+def refresh_canva_token() -> dict[str, Any]:
+    """Canva のアクセストークンを更新し、保存できた場所を返す（トークンの値は返さない）。"""
+    from ..tools import refresh_canva_token as canva_token
+
+    try:
+        return canva_token.refresh_and_store()
+    except canva_token.CanvaTokenError as err:
+        return {"status": "error", "message": str(err)}
+
+
 def list_modes() -> list[dict[str, Any]]:
     source = load_shader_source()
     modes = []

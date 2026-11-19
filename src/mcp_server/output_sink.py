@@ -1,6 +1,7 @@
 """生成画像の出力アダプタ（local / drive / gcs 切替）。
 
-GeneratorsAI の ``src/mcp_server/output_sink.py`` から、ログ一覧の機能を除いて移したもの。
+GeneratorsAI の ``src/mcp_server/output_sink.py`` を移したもの。違いは、GCS の接頭辞の既定が
+``shapechange`` であることと、画像の取得を接頭辞の下に限ること。
 
 環境変数 ``OUTPUT_SINK`` で送り先を選ぶ:
 
@@ -11,6 +12,8 @@ GeneratorsAI の ``src/mcp_server/output_sink.py`` から、ログ一覧の機�
 Stage 別シンクの挙動:
   - Stage3/4 (中間画像): ``publish_intermediate()`` → GCS のみ（Drive には上げない）
   - Stage5 (完成画像):   ``publish()`` → 設定シンクへ通常アップロード
+
+GCS に残した画像は ``list_gcs_logs()`` で一覧し、``fetch_gcs_image_b64()`` で 1 件ずつ取得できる。
 
 いずれのシンクも「使う時だけ」依存ライブラリを遅延 import する。
 依存やクレデンシャルが欠けている場合は例外で落とさず、local にフォールバックして
@@ -250,7 +253,7 @@ def _publish_gcs(files: list[str], run_label: str) -> list[dict[str, Any]]:
     except Exception as e:  # noqa: BLE001
         return _fallback(files, f"GCS クライアント初期化失敗 ({_err_detail(e)})")
 
-    prefix = os.getenv(ENV_GCS_PREFIX, "shapechange").strip("/")
+    prefix = _gcs_prefix()
     try:
         ttl = int(os.getenv(ENV_SIGNED_TTL, str(7 * 24 * 3600)))
     except ValueError:
@@ -277,6 +280,134 @@ def _publish_gcs(files: list[str], run_label: str) -> list[dict[str, Any]]:
             item["note"] = f"GCS アップロード失敗 ({_err_detail(e)})。"
             results.append(item)
     return results
+
+
+# ── GCS に残した画像の一覧と取得（読み取り専用） ─────────────────
+def _gcs_prefix() -> str:
+    return os.getenv(ENV_GCS_PREFIX, "shapechange").strip("/")
+
+
+def list_gcs_logs(limit: int = 300, since_days: int = 49) -> dict[str, Any]:
+    """GCS に残っている画像（中間画像と、GCS へ直接置いた完成画像）を新しい順に返す。
+
+    バケットを直接見るので、サーバーを再起動してジョブや ``outputs/`` が消えたあとも、
+    過去 ``since_days`` 日（既定 49 日）の分を署名付き URL と一緒に返せる。
+
+    Returns
+    -------
+    dict::
+        {
+          "bucket": str, "prefix": str, "since_days": int,
+          "count": int,
+          "objects": [ {"name","object_key","url","size","created","sink":"gcs"} ],
+          "note": str,   # 一覧を取れなかった理由（取れたときは空）
+        }
+    """
+    bucket_name = os.getenv(ENV_GCS_BUCKET, "").strip()
+    prefix = _gcs_prefix()
+    base: dict[str, Any] = {
+        "bucket": bucket_name, "prefix": prefix, "since_days": since_days,
+        "count": 0, "objects": [], "note": "",
+    }
+    if not bucket_name:
+        base["note"] = f"{ENV_GCS_BUCKET} 未設定"
+        return base
+    try:
+        from google.cloud import storage  # type: ignore
+    except ImportError:
+        base["note"] = "google-cloud-storage 未インストール"
+        return base
+
+    try:
+        ttl = int(os.getenv(ENV_SIGNED_TTL, str(7 * 24 * 3600)))
+    except ValueError:
+        ttl = 7 * 24 * 3600
+
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, since_days))
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    # 期間で絞る → 新しい順に並べる → limit 件に絞る → 署名する（署名は IAM の呼び出しを伴うため最後）
+    try:
+        client = storage.Client()
+        candidates = [
+            blob for blob in client.list_blobs(bucket_name, prefix=f"{prefix}/" if prefix else None)
+            if Path(blob.name).suffix.lower() in _IMAGE_EXTS
+            and (getattr(blob, "time_created", None) or cutoff) >= cutoff
+        ]
+    except Exception as e:  # noqa: BLE001
+        base["note"] = f"一覧の取得に失敗 ({_err_detail(e)})"
+        return base
+    candidates.sort(key=lambda blob: getattr(blob, "time_created", None) or epoch, reverse=True)
+
+    for blob in candidates[:limit]:
+        created = getattr(blob, "time_created", None)
+        base["objects"].append({
+            "name": Path(blob.name).name,
+            "object_key": blob.name,
+            "url": _signed_url(blob, bucket_name, blob.name, ttl),
+            "size": int(getattr(blob, "size", 0) or 0),
+            "created": created.isoformat() if created else "",
+            "sink": "gcs",
+        })
+    base["count"] = len(base["objects"])
+    return base
+
+
+def fetch_gcs_image_b64(object_key: str) -> dict[str, Any]:
+    """GCS の画像 1 件を base64 で返す（署名付き URL を開けない環境向け）。
+
+    ``object_key`` は ``list_gcs_logs`` が返すキー。ファイル名だけでも受け付ける。
+    取得できるのは ``GCS_PREFIX`` の下だけ（同じバケットの、ほかの用途の画像は返さない）。
+
+    Returns
+    -------
+    dict::
+        {
+          "object_key": str, "name": str, "mime_type": str,
+          "content": str,   # base64（失敗時は空文字）
+          "size": int,
+          "note": str,      # 取得できなかった理由（取得できたときは空）
+        }
+    """
+    import base64
+    import mimetypes
+
+    bucket_name = os.getenv(ENV_GCS_BUCKET, "").strip()
+    prefix = _gcs_prefix()
+    key = (object_key or "").strip().lstrip("/")
+    if key and prefix and "/" not in key:
+        key = f"{prefix}/{key}"
+    out: dict[str, Any] = {
+        "object_key": key, "name": Path(key).name,
+        "mime_type": "", "content": "", "size": 0, "note": "",
+    }
+    if not bucket_name:
+        out["note"] = f"{ENV_GCS_BUCKET} 未設定"
+        return out
+    if not key:
+        out["note"] = "object_key が空です"
+        return out
+    if prefix and not key.startswith(f"{prefix}/"):
+        out["note"] = f"取得できるのは {prefix}/ の下の画像だけです"
+        return out
+    try:
+        from google.cloud import storage  # type: ignore
+    except ImportError:
+        out["note"] = "google-cloud-storage 未インストール"
+        return out
+
+    try:
+        blob = storage.Client().bucket(bucket_name).blob(key)
+        data = blob.download_as_bytes()
+    except Exception as e:  # noqa: BLE001
+        out["note"] = f"GCS からの取得に失敗 ({_err_detail(e)})"
+        return out
+
+    out["mime_type"] = getattr(blob, "content_type", None) or mimetypes.guess_type(key)[0] or "image/jpeg"
+    out["size"] = len(data)
+    out["content"] = base64.b64encode(data).decode("ascii")
+    return out
 
 
 # ── リモート格納名 ──────────────────────────────────────────────

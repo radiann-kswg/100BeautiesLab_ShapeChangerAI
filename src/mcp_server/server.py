@@ -8,6 +8,8 @@
 - shapechange_job_status             ジョブの進捗と完成画像のリンク
 - shapechange_answer_reference_warning  Stage 2 の観察失敗に対する続行／中止の回答
 - shapechange_list_runs / shapechange_get_run_logs  実行の一覧と記録
+- shapechange_list_gcs_logs / shapechange_get_gcs_image  GCS に残っている画像の一覧と取得
+- shapechange_refresh_canva_token    Canva のアクセストークンの更新
 - shapechange_list_modes / shapechange_list_characters  指定できる形状とキャラクター
 
 生成は数分かかるため、生成系のツールはジョブを登録してすぐ job_id を返す。
@@ -30,7 +32,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..pipeline.shape_pipeline import _load_env
-from . import tools
+from . import output_sink, tools
 from .auth import SimpleOAuthProvider
 from .jobs import MANAGER
 
@@ -141,6 +143,16 @@ class RunInput(_Base):
     run_id: str
 
 
+class ListGcsLogsInput(_Base):
+    limit: int = Field(300, ge=1, le=2000, description="返す最大件数")
+    since_days: int = Field(49, ge=1, le=3650, description="この日数以内に作られた画像を対象にする（既定 49 日）")
+
+
+class GcsImageInput(_Base):
+    object_key: str = Field(..., min_length=1, max_length=1024,
+                            description="shapechange_list_gcs_logs の object_key（ファイル名だけでもよい）")
+
+
 class ListCharactersInput(_Base):
     work: Optional[str] = None
 
@@ -208,6 +220,26 @@ async def shapechange_list_runs(params: ListRunsInput) -> str:
 async def shapechange_get_run_logs(params: RunInput) -> str:
     """実行 1 件のプロンプト・条件・観察・検査ログ・中間画像を返す。"""
     return _json(tools.run_logs(params.run_id))
+
+
+@mcp.tool(name="shapechange_list_gcs_logs", annotations={"title": "GCS に残っている画像の一覧", **_READ})
+async def shapechange_list_gcs_logs(params: ListGcsLogsInput) -> str:
+    """GCS に残っている中間画像を、新しい順に署名付き URL と一緒に返す。バケットを直接見るので、
+    サーバーが再起動してジョブや実行の記録が消えたあとも使える。"""
+    return _json(output_sink.list_gcs_logs(params.limit, params.since_days))
+
+
+@mcp.tool(name="shapechange_get_gcs_image", annotations={"title": "GCS の画像を取得", **_READ})
+async def shapechange_get_gcs_image(params: GcsImageInput) -> str:
+    """GCS の画像 1 件を base64 で返す。署名付き URL を開けない環境で使う。"""
+    return json.dumps(output_sink.fetch_gcs_image_b64(params.object_key), ensure_ascii=False)
+
+
+@mcp.tool(name="shapechange_refresh_canva_token", annotations={"title": "Canva のアクセストークンを更新", **_WRITE})
+async def shapechange_refresh_canva_token() -> str:
+    """ShapeChangerAI 用の Canva 連携のアクセストークンを、リフレッシュトークンで更新する。Canva 仕上げが
+    401 で失敗したときに呼ぶ。結果の saved_to が空なら、新しいトークンはサーバーが止まると失われる。"""
+    return _json(tools.refresh_canva_token())
 
 
 @mcp.tool(name="shapechange_list_modes", annotations={"title": "形状の一覧", **_READ})
