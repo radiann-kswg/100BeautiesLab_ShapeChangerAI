@@ -46,7 +46,7 @@ gcloud compute ssh generators-ai --zone=us-central1-f --command "bash ~/setup_sh
 
 VM が使うのは公開リポジトリの内容なので、コードやシェーダーの更新は、先に [publish.md](publish.md) の手順で公開側へ出してから、上のコマンドを実行する。
 
-Canva の値は入れない。ShapeChangerAI 用の連携ができるまで、VM では Canva 仕上げを省いた結果になる。
+Canva の値は入れない。VM では Canva 仕上げを省いた結果になる。Canva のリフレッシュトークンは使うたびに入れ替わるので、Cloud Run と VM の両方に同じ連携を持たせると、片方が更新したときにもう片方が失効する。
 
 モデルを PC の `.env` と同じにする場合は、VM の `.env` に行を足す（一度足せば、作り直しても引き継がれる）。
 
@@ -62,7 +62,7 @@ SSH 越しに、VM の上で MCP サーバーを stdio で起動する。サー�
 claude mcp add --transport stdio --env CLOUDSDK_SSH_PUTTY_FORCE_CONNECT=false shapechange-vm -- gcloud compute ssh generators-ai --zone=us-central1-f --project=claude-radiannkswg --quiet --ssh-flag=-T --command "cd /opt/shapechanger && exec .venv/bin/python -m src.mcp_server"
 ```
 
-- `shapechange_*` のツールが 10 件見えればつながっている。
+- `shapechange_*` のツールが 13 件見えればつながっている。
 - **Windows では `CLOUDSDK_SSH_PUTTY_FORCE_CONNECT=false` が要る。** 無いと gcloud が plink の標準入力へ `y` を流し込み、クライアントからの通信がサーバーへ届かない。
 - **VM を起動した直後は、先に 1 回ふつうに SSH する**（`gcloud compute ssh generators-ai --zone=us-central1-f --command true`）。外部 IP が変わると plink がホスト鍵の確認を求め、上の設定ではそこで止まるため。
 - ジョブはサーバーのメモリー上にある。クライアントを閉じて SSH が切れると、実行中のジョブも止まる。実行の記録は VM の `outputs/` に残る。

@@ -48,7 +48,7 @@ python -m src.mcp_server                                             # コネク
 - PowerShell で `python` が Microsoft Store のエイリアスに当たって起動しない場合は、`python` を `py` に読み替える。
 - 生成は課金を伴う。先に `--dry-run` でプロンプトと参照画像を確認し、依頼者に示してから本番実行する。5 段階は 1 回の実行で画像生成が最大 7 回ほどかかる。
 - Stage 2 の画像観察が失敗したときは、利用者が続行を明示した場合だけ先へ進む。無回答は中止として扱う。
-- Canva は、このリポジトリ用の連携（`SHAPECHANGE_CANVA_ACCESS_TOKEN`）だけを使う。GeneratorsAI の `CANVA_*` を流用しない。
+- Canva は、このリポジトリ用の連携（`SHAPECHANGE_CANVA_ACCESS_TOKEN`）だけを使う。GeneratorsAI の `CANVA_*` を流用しない。連携を初めて設定するときと、Canva 仕上げが 401 で省かれたときは、[src/README.md の「Canva の連携」](src/README.md#canva-の連携) の手順でトークンを取得・更新する。
 - キャラクターは manifest の `ai_training.allowed` が true のレコードだけを受け付ける。追加の参照画像（`--ref`）は `references/` か `outputs/` に置いたファイルに限る。
 - 形状の寸法は実行のたびに `VRCShader_ShapeChange` のシェーダーから読む。サブモジュールの更新後に読み取りが止まった場合は、`src/shape/vrc_source.py` をシェーダーの記述に合わせる。輪郭や顔の位置の記述は `src/shape/mode_descriptions.json` で直す。
 - `VRCShader_ShapeChange/` は公開用のシェーダーパッケージで、モデルや検証用のデータを含まない。VM はこのサブモジュールをそのまま取得する。Cloud Run のイメージには、`python -m src.shape.vm_bundle <空のフォルダー>` が書き出すシェーダーの 2 ファイルだけを入れる。シェーダーの開発用リポジトリ（`VRCShader_ShapeChange-Develop`）の作業コピーにはモデルや検証用のデータがあるので、VM にもイメージにも置かない。

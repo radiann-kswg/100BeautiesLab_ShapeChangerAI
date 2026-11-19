@@ -6,6 +6,7 @@ https://www.canva.dev/docs/connect/
 
 環境変数 (.env):
     SHAPECHANGE_CANVA_ACCESS_TOKEN  このリポジトリ用の Canva 連携のアクセストークン
+                                    （取得と更新は ``python -m src.tools.refresh_canva_token``）
     CANVA_EXPORT_FORMAT             png / jpg（既定 png）
 
 GeneratorsAI の ``CANVA_ACCESS_TOKEN`` は読まない。Canva のリフレッシュトークンは使うたびに
@@ -97,6 +98,10 @@ def export_via_canva(image: Path, out_dir: Path, title: str) -> list[Path]:
     except ProviderError:
         raise
     except Exception as err:  # noqa: BLE001 — HTTP・JSON の失敗をまとめて報告する
+        if getattr(err, "code", None) == 401:
+            raise ProviderError(
+                "Canva のアクセストークンが失効しています。shapechange_refresh_canva_token か "
+                "`python -m src.tools.refresh_canva_token --use-refresh-token` で更新してください。") from err
         raise ProviderError(f"Canva の処理に失敗しました: {type(err).__name__}: {err}") from err
     if not saved:
         raise ProviderError("Canva の書き出し結果が空でした。")

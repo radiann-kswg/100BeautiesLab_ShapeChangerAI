@@ -96,7 +96,24 @@ PowerShell で `python` が Microsoft Store のエイリアスに当たって起
 
 - 画像モデル: `GEMINI_API_KEY` と `GEMINI_IMAGE_MODEL`（未設定なら `GEMINI_REFERENCE_MODEL`）、`OPENAI_API_KEY` と `OPENAI_IMAGE_MODEL`。
 - 検査: `OPENAI_API_KEY` と `GPT_MODEL`（既定 `gpt-4o`）。
-- Canva: `SHAPECHANGE_CANVA_ACCESS_TOKEN`。GeneratorsAI の `CANVA_ACCESS_TOKEN` は読まない。Canva のリフレッシュトークンは使うたびに入れ替わるので、連携を共有すると片方が失効する。
+- Canva: `SHAPECHANGE_CANVA_ACCESS_TOKEN`（取得と更新は下の「Canva の連携」）。GeneratorsAI の `CANVA_ACCESS_TOKEN` は読まない。Canva のリフレッシュトークンは使うたびに入れ替わるので、連携を共有すると片方が失効する。
+
+### Canva の連携
+
+Stage 5 の Canva 仕上げは、ShapeChangerAI 用に作った Canva の連携で行う。トークンの取得と更新の方法は GeneratorsAI と同じ（OAuth 2.0 の PKCE とリフレッシュトークン）で、環境変数は `SHAPECHANGE_CANVA_*` に分けている。連携はまだ作っていないので、この手順は実際の Canva API では確かめていない（トークンのやり取りは偽物でテストしている）。
+
+1. Canva の Developer Portal で連携を作る（[Canva Connect](https://www.canva.dev/docs/connect/)）。Redirect URL に `http://127.0.0.1:3001/oauth/redirect` を登録し、スコープは `asset:read`・`asset:write`・`design:content:read`・`design:content:write`・`design:meta:read` を有効にする。
+2. 連携の Client ID と Client Secret を、`.env` の `SHAPECHANGE_CANVA_CLIENT_ID` と `SHAPECHANGE_CANVA_CLIENT_SECRET` に入れる。
+3. トークンを取得する。表示された URL をブラウザで開いて許可すると、`.env` の `SHAPECHANGE_CANVA_ACCESS_TOKEN` と `SHAPECHANGE_CANVA_REFRESH_TOKEN` が書き込まれる。トークンの値は画面に出ない。
+
+```sh
+python -m src.tools.refresh_canva_token                        # 初回: ブラウザで許可して取得する
+python -m src.tools.refresh_canva_token --use-refresh-token    # 2 回目以降: ブラウザなしで更新する
+```
+
+アクセストークンは短い時間で失効する。失効していると Canva 仕上げだけが省かれ、完成画像は Canva を通さないものになる（理由は `run_meta.json` の Stage 5 の記録に残る）。そのときは `--use-refresh-token` か、コネクタの `shapechange_refresh_canva_token` で更新してから生成し直す。コネクタのツールは、新しいトークンを `.env`（あれば）と Secret Manager（使えれば）へ保存し、保存できた場所を結果の `saved_to` に返す。Secret Manager では、新しい版を足したあとに 1 つ前の版を消す（入れ替わる前のトークンはもう使えず、版は残っているだけで課金されるため）。
+
+リフレッシュトークンは 1 回使うと新しいものに入れ替わる。PC の `.env` と Secret Manager が同じトークンを持っているとき、片方で更新すると、もう片方のリフレッシュトークンは使えなくなる。使えなくなったら、PC で引数なしの取得からやり直し、Cloud Run で使う分は登録し直す（[docs/deploy-cloud-run.md](../docs/deploy-cloud-run.md) の「Canva の連携」）。
 
 ## 出力
 
@@ -144,9 +161,13 @@ Claude Desktop などに登録する例（パスは環境に合わせる）:
 | `shapechange_job_status` | 進捗と完成画像のリンク。`awaiting_confirmation` なら利用者に確認する |
 | `shapechange_answer_reference_warning` | Stage 2 の観察失敗に対する続行／中止の回答（無回答は 30 分で中止） |
 | `shapechange_list_runs` / `shapechange_get_run_logs` | 実行の一覧と、プロンプト・検査ログ・中間画像 |
+| `shapechange_list_gcs_logs` / `shapechange_get_gcs_image` | GCS に残っている中間画像の一覧（署名付き URL 付き）と、1 件の取得（base64） |
+| `shapechange_refresh_canva_token` | Canva のアクセストークンの更新（上の「Canva の連携」） |
 | `shapechange_list_modes` / `shapechange_list_characters` | 指定できる形状とキャラクター |
 
 完成画像は `OUTPUT_SINK`（`local` / `drive` / `gcs`）へ届ける。Drive では `DRIVE_FOLDER_ID` の直下に `shapechange_{実行名}__…` の名前で置く。中間画像は Drive へ上げず、`GCS_BUCKET` があれば GCS、無ければサーバー内に残す。ジョブはメモリー上にあり、サーバーを再起動すると消える（実行の記録は `outputs/` に残る）。
+
+GCS に置いた中間画像は、`shapechange_list_gcs_logs` で後から一覧できる。バケットを直接見るので、サーバーが再起動して `outputs/` が消えたあとも使える。GeneratorsAI の `numbertales_list_gcs_logs`・`numbertales_get_gcs_image` と同じ作りで、違いは 2 つ。取得できる画像を `GCS_PREFIX`（既定 `shapechange`）の下に限っていることと、一覧の既定の件数が 50 件であること（GeneratorsAI は 300 件）。
 
 VM では、GeneratorsAI と同じく、使うときだけ起動して SSH 越しの stdio でつなぐ。配置と更新の手順は [docs/deploy-vm.md](../docs/deploy-vm.md)。
 
@@ -174,6 +195,7 @@ python -m src.shape.vm_bundle outputs/vm-shape-data
 | `shape/vm_bundle.py` | Cloud Run のイメージへ渡すシェーダー 2 ファイルの書き出し |
 | `utils/dataset.py` | manifest の読み込み、AI 利用ゲート、キャラクター検索、参照画像の選定 |
 | `gemini/generate.py` / `openai/generate.py` / `openai/vision.py` / `canva/generate.py` | 外部 API の呼び出し |
+| `tools/refresh_canva_token.py` | Canva の連携のトークンの取得・更新と、Secret Manager への登録 |
 | `mcp_server/` | MCP サーバー。`tools.py` が中身、`server.py` が MCP への登録。`jobs.py` / `auth.py` / `output_sink.py` は GeneratorsAI から移したもの |
 | `utils/run_log.py` / `utils/paths.py` / `utils/image_io.py` / `utils/provider.py` | 記録・実行フォルダー・画像の保存・共通の型 |
 
@@ -185,6 +207,7 @@ python tests/test_dataset_gate.py    # キャラクター検索と AI 利用ゲ�
 python tests/test_pipeline.py        # 5 段階・合同・改稿・自然文・記録
 python tests/test_providers.py       # 外部 API の呼び出し方（SDK は偽物に差し替え）
 python tests/test_mcp_tools.py       # MCP ツールの中身（MCP SDK は不要）
+python tests/test_canva_token.py     # Canva の連携のトークンの取得・更新（Canva と GCP は偽物に差し替え）
 python tests/test_paths.py           # 実行フォルダーの作成
 ```
 

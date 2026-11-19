@@ -5,14 +5,20 @@
 """
 from __future__ import annotations
 
+import base64
 import contextlib
 import io
 import json
 import os
 import sys
 import tempfile
+import threading
 import time
+import types
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
@@ -126,6 +132,87 @@ def test_remote_names_keep_joint_character_directories():
     assert "char_NumberTales-85" in first and "char_NumberTales-73" in second
 
 
+class _FakeBlob:
+    def __init__(self, name: str, created: datetime | None, data: bytes = b"image"):
+        self.name, self.time_created, self.size, self.content_type, self._data = name, created, len(data), None, data
+
+    def generate_signed_url(self, **_):
+        return f"https://signed.example/{self.name}"
+
+    def download_as_bytes(self):
+        return self._data
+
+
+@contextlib.contextmanager
+def _fake_gcs(blobs: list[_FakeBlob]):
+    """google.cloud.storage を偽物に差し替える（GCS は呼ばない）。"""
+    class Client:
+        def list_blobs(self, bucket, prefix=None):
+            return [blob for blob in blobs if blob.name.startswith(prefix or "")]
+
+        def bucket(self, name):
+            def blob(key):
+                (found,) = [item for item in blobs if item.name == key]     # 無いキーは例外になる
+                return found
+            return types.SimpleNamespace(blob=blob)
+
+    storage = types.ModuleType("google.cloud.storage")
+    storage.Client = Client
+    cloud = types.ModuleType("google.cloud")
+    cloud.storage = storage
+    google = types.ModuleType("google")
+    google.cloud = cloud
+    with patch.dict(sys.modules, {"google": google, "google.cloud": cloud, "google.cloud.storage": storage}), \
+            patch.dict(os.environ, {"GCS_BUCKET": "bucket", "GCS_PREFIX": "shapechange"}):
+        yield
+
+
+def test_gcs_logs_list_recent_images_under_the_prefix_newest_first():
+    now = datetime.now(timezone.utc)
+    blobs = [_FakeBlob("shapechange/run_a__rough_01.jpg", now - timedelta(days=2)),
+             _FakeBlob("shapechange/run_b__rough_01.jpg", now - timedelta(hours=1)),
+             _FakeBlob("shapechange/run_c__rough_01.jpg", now - timedelta(days=80)),      # 期間の外
+             _FakeBlob("shapechange/run_b__notes.txt", now),                              # 画像ではない
+             _FakeBlob("numbertales/run_x__rough_01.jpg", now)]                           # 別の用途の接頭辞
+    with _fake_gcs(blobs):
+        listed = tools.output_sink.list_gcs_logs()
+        assert [item["object_key"] for item in listed["objects"]] == [
+            "shapechange/run_b__rough_01.jpg", "shapechange/run_a__rough_01.jpg"]
+        assert listed["count"] == 2 and listed["note"] == ""
+        assert listed["objects"][0]["url"] == "https://signed.example/shapechange/run_b__rough_01.jpg"
+        assert tools.output_sink.list_gcs_logs(limit=1)["count"] == 1
+        del os.environ["GCS_BUCKET"]
+        assert "GCS_BUCKET 未設定" in tools.output_sink.list_gcs_logs()["note"]
+
+
+def test_empty_gcs_prefix_uses_the_safe_default_for_listing_and_fetching():
+    now = datetime.now(timezone.utc)
+    blobs = [_FakeBlob("shapechange/run_a__rough_01.jpg", now),
+             _FakeBlob("numbertales/run_b__rough_01.jpg", now)]
+    with _fake_gcs(blobs):
+        for configured in ("", "/", "///"):
+            with patch.dict(os.environ, {"GCS_PREFIX": configured}):
+                assert tools.output_sink._gcs_prefix() == "shapechange"
+                listed = tools.output_sink.list_gcs_logs()
+                assert [item["object_key"] for item in listed["objects"]] == [
+                    "shapechange/run_a__rough_01.jpg"]
+                outside = tools.output_sink.fetch_gcs_image_b64("numbertales/run_b__rough_01.jpg")
+                assert outside["content"] == "" and "shapechange/ の下" in outside["note"]
+
+
+def test_gcs_image_comes_only_from_this_servers_prefix():
+    blobs = [_FakeBlob("shapechange/run_a__rough_01.jpg", None, b"jpeg-bytes"),
+             _FakeBlob("numbertales/other.jpg", None, b"other")]
+    with _fake_gcs(blobs):
+        image = tools.output_sink.fetch_gcs_image_b64("run_a__rough_01.jpg")          # ファイル名だけでも引ける
+        assert base64.b64decode(image["content"]) == b"jpeg-bytes" and image["size"] == 10
+        assert image["object_key"] == "shapechange/run_a__rough_01.jpg" and image["mime_type"] == "image/jpeg"
+        outside = tools.output_sink.fetch_gcs_image_b64("numbertales/other.jpg")
+        assert outside["content"] == "" and "shapechange/ の下" in outside["note"]
+        missing = tools.output_sink.fetch_gcs_image_b64("shapechange/none.jpg")
+        assert missing["content"] == "" and "取得に失敗" in missing["note"]
+
+
 def test_observation_failure_waits_for_the_users_answer():
     from src.utils.provider import ProviderError
 
@@ -149,6 +236,29 @@ def test_observation_failure_waits_for_the_users_answer():
         tools.MANAGER.answer_reference(job_id, waiting["confirmation"]["request_id"], False)
         done = _wait(job_id, ("pending", "running", "awaiting_confirmation"))
     assert done["status"] == "succeeded" and done["result"]["status"] == "cancelled" and not generator.calls
+
+
+def test_concurrent_canva_refreshes_are_serialized():
+    from src.tools import refresh_canva_token as canva_token
+
+    active = maximum = 0
+    active_lock = threading.Lock()
+
+    def refresh_and_store():
+        nonlocal active, maximum
+        with active_lock:
+            active += 1
+            maximum = max(maximum, active)
+        time.sleep(0.05)
+        with active_lock:
+            active -= 1
+        return {"status": "ok"}
+
+    with patch.object(canva_token, "refresh_and_store", side_effect=refresh_and_store):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: tools.refresh_canva_token(), range(2)))
+    assert results == [{"status": "ok"}, {"status": "ok"}]
+    assert maximum == 1
 
 
 def test_lists_for_choosing_inputs():

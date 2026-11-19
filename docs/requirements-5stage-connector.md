@@ -21,7 +21,7 @@
 **コネクタ**（MCP サーバー `shapechange_mcp`）
 
 - ShapeChangerAI 専用のサーバーにし、GeneratorsAI のコネクタとは分ける。
-- ツール: 単体生成、合同生成、自然文からの依頼、改稿、ジョブ状況、確認待ちへの回答、実行一覧、実行ログ、形状一覧、キャラクター一覧。
+- ツール: 単体生成、合同生成、自然文からの依頼、改稿、ジョブ状況、確認待ちへの回答、実行一覧、実行ログ、形状一覧、キャラクター一覧。2026-11-19 に、GeneratorsAI のコネクタにそろえて、GCS に残った画像の一覧と取得、Canva のトークン更新を足した。
 - Drive へは完成画像だけを、GeneratorsAI と同じフォルダーに `shapechange_` で始まる名前で置く。中間画像は `GCS_BUCKET` があれば GCS、無ければサーバー内。
 - HTTP で公開する場合の認証は、GeneratorsAI と同じ自動承認の OAuth。本人確認はしない。
 - Canva は ShapeChangerAI 用の連携を別に作る（リフレッシュトークンを GeneratorsAI と取り合わないため）。
@@ -90,7 +90,7 @@
 - [x] claude.ai へのコネクタの登録（2026-11-18、ラジアンが登録）。
 - [ ] GitHub Actions からの自動デプロイ。GeneratorsAI には有るが、こちらは未整備。シェーダーの 2 ファイルは、2026-11-19 から公開のサブモジュールで取得できるようになった（ビルドへ渡す方法の課題は解消）。
 - [ ] 中間画像の置き場。Cloud Run は GCS（`generators-ai-outputs` の `shapechange/`）へ置く設定にしたが、生成を伴うため未確認。VM の `.env` には `GCS_BUCKET` を入れていないので、VM では Stage 3/4 の画像が `outputs/` に残るだけで、クライアントからは見えない。
-- [ ] ShapeChangerAI 用の Canva 連携の作成と、アクセストークンを更新する仕組み。今あるのは書き出し処理だけで、偽の API でしか確かめていない。
+- [ ] ShapeChangerAI 用の Canva 連携の作成。アクセストークンを取得・更新する仕組みは、GeneratorsAI と同じ方法で 2026-11-19 に入れた（`python -m src.tools.refresh_canva_token` と `shapechange_refresh_canva_token`。手順は [src/README.md](../src/README.md) の「Canva の連携」）。連携がまだ無いので、書き出しもトークンのやり取りも、偽の API でしか確かめていない。
 - [x] シェーダー調整後の `src/shape/mode_descriptions.json` の見直し（2026-11-18）。寸法の読み取り結果は調整前と同じ。言葉は、膨体とコインの「形を保つ耳・尾」、上面顔円柱の顔、板・反物の顔（頭も同じ幅まで横に広がる）を直した。この記述での本番生成はまだ行っていない。
 - [x] Drive への実アップロードの確認（2026-11-18）。PC から SSH 越しに VM のコネクタへつなぎ、`shapechange_generate_character` で 42 の真球を 5 段階で生成した。完成画像 1 枚が、保存先フォルダーに `shapechange_20261118_062525_gemini_mode04_NumberTales-42__stage5_final_mode04_NumberTales-42_01.jpg` として入った。PC の `.env` の `DRIVE_*` は `deleted_client`（OAuth クライアントが削除済み）のままなので、PC から Drive へ上げる場合は Secret Manager の値に入れ替える必要がある。
 

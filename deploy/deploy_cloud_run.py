@@ -41,6 +41,10 @@ ENV_VARS = {
 # Secret Manager から渡す値。Canva は GeneratorsAI の連携を流用しないので入れない
 SECRETS = ["GEMINI_API_KEY", "OPENAI_API_KEY", "DRIVE_FOLDER_ID", "DRIVE_CLIENT_ID", "DRIVE_CLIENT_SECRET",
            "DRIVE_REFRESH_TOKEN"]
+# ShapeChangerAI 用の Canva 連携（任意）。4 件とも Secret Manager にあるときだけ渡す
+# （登録は python -m src.tools.refresh_canva_token --push-secrets）
+CANVA_SECRETS = ["SHAPECHANGE_CANVA_ACCESS_TOKEN", "SHAPECHANGE_CANVA_REFRESH_TOKEN",
+                 "SHAPECHANGE_CANVA_CLIENT_ID", "SHAPECHANGE_CANVA_CLIENT_SECRET"]
 
 
 def _git(*args: str) -> str:
@@ -85,12 +89,24 @@ def gcloud(*args: str, capture: bool = False) -> str:
     return (done.stdout or "").strip()
 
 
+def canva_secrets() -> list[str]:
+    """Canva の連携の 4 件が Secret Manager にそろっていれば、その名前を返す。欠けていれば渡さない
+    （無いシークレットを指定すると、リビジョンを作れずデプロイが失敗する）。"""
+    registered = set(gcloud("secrets", "list", "--format=value(name.basename())", capture=True).split())
+    missing = [name for name in CANVA_SECRETS if name not in registered]
+    if missing:
+        print(f"Canva の連携は渡しません（Secret Manager に無い: {', '.join(missing)}）。Canva 仕上げは省かれます。")
+        return []
+    print("Canva の連携（SHAPECHANGE_CANVA_*）を渡します。")
+    return CANVA_SECRETS
+
+
 def deploy(source: Path, commit: str) -> str:
     # URL は「サービス名-プロジェクト番号.リージョン.run.app」で決まるので、デプロイ前に OAuth の issuer を渡せる
     number = gcloud("projects", "describe", PROJECT, "--format=value(projectNumber)", capture=True)
     url = f"https://{SERVICE}-{number}.{REGION}.run.app"
     env = ",".join(f"{key}={value}" for key, value in {**ENV_VARS, "MCP_ISSUER_URL": url}.items())
-    secrets = ",".join(f"{name}={name}:latest" for name in SECRETS)
+    secrets = ",".join(f"{name}={name}:latest" for name in SECRETS + canva_secrets())
     gcloud("run", "deploy", SERVICE, f"--source={source}", f"--region={REGION}", "--port=8080",
            "--allow-unauthenticated", "--min-instances=0", "--max-instances=1", "--memory=1Gi", "--timeout=3600",
            "--no-cpu-throttling", f"--set-env-vars={env}", f"--set-secrets={secrets}",
