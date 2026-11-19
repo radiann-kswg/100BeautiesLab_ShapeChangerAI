@@ -284,7 +284,7 @@ def _publish_gcs(files: list[str], run_label: str) -> list[dict[str, Any]]:
 
 # ── GCS に残した画像の一覧と取得（読み取り専用） ─────────────────
 def _gcs_prefix() -> str:
-    return os.getenv(ENV_GCS_PREFIX, "shapechange").strip("/")
+    return os.getenv(ENV_GCS_PREFIX, "").strip("/") or "shapechange"
 
 
 def list_gcs_logs(limit: int = 50, since_days: int = 49) -> dict[str, Any]:

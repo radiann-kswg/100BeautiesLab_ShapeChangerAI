@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -226,20 +227,21 @@ async def shapechange_get_run_logs(params: RunInput) -> str:
 async def shapechange_list_gcs_logs(params: ListGcsLogsInput) -> str:
     """GCS に残っている中間画像を、新しい順に署名付き URL と一緒に返す。バケットを直接見るので、
     サーバーが再起動してジョブや実行の記録が消えたあとも使える。"""
-    return _json(output_sink.list_gcs_logs(params.limit, params.since_days))
+    return _json(await asyncio.to_thread(output_sink.list_gcs_logs, params.limit, params.since_days))
 
 
 @mcp.tool(name="shapechange_get_gcs_image", annotations={"title": "GCS の画像を取得", **_READ})
 async def shapechange_get_gcs_image(params: GcsImageInput) -> str:
     """GCS の画像 1 件を base64 で返す。署名付き URL を開けない環境で使う。"""
-    return json.dumps(output_sink.fetch_gcs_image_b64(params.object_key), ensure_ascii=False)
+    result = await asyncio.to_thread(output_sink.fetch_gcs_image_b64, params.object_key)
+    return json.dumps(result, ensure_ascii=False)
 
 
 @mcp.tool(name="shapechange_refresh_canva_token", annotations={"title": "Canva のアクセストークンを更新", **_WRITE})
 async def shapechange_refresh_canva_token() -> str:
     """ShapeChangerAI 用の Canva 連携のアクセストークンを、リフレッシュトークンで更新する。Canva 仕上げが
     401 で失敗したときに呼ぶ。結果の saved_to が空なら、新しいトークンはサーバーが止まると失われる。"""
-    return _json(tools.refresh_canva_token())
+    return _json(await asyncio.to_thread(tools.refresh_canva_token))
 
 
 @mcp.tool(name="shapechange_list_modes", annotations={"title": "形状の一覧", **_READ})

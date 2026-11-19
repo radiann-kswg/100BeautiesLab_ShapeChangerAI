@@ -182,6 +182,20 @@ def test_secret_manager_gets_the_refresh_token_first():
         assert canva_token._store_in_secret_manager(dict(_TOKENS)) == "RuntimeError"    # 落とさずに理由を返す
 
 
+def test_env_file_save_failure_does_not_skip_secret_manager():
+    with tempfile.TemporaryDirectory() as tmp, _canva([]), \
+            _env(**_CLIENT, SHAPECHANGE_CANVA_REFRESH_TOKEN="old-refresh"), \
+            patch.object(canva_token, "update_env_file", side_effect=OSError), \
+            patch.object(canva_token, "_store_in_secret_manager", return_value="") as store:
+        env_file = Path(tmp) / ".env"
+        env_file.write_text("SHAPECHANGE_CANVA_REFRESH_TOKEN=old-refresh\n", encoding="utf-8")
+        result = canva_token.refresh_and_store(env_file)
+    store.assert_called_once_with(_TOKENS)
+    assert result["saved_to"] == ["Secret Manager"]
+    assert result["env_file_note"] == "OSError"
+    assert ".env への保存に失敗しました" in result["message"]
+
+
 def test_push_secrets_creates_missing_secrets_and_passes_values_on_stdin():
     commands: list = []
 

@@ -12,8 +12,10 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import types
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -183,6 +185,21 @@ def test_gcs_logs_list_recent_images_under_the_prefix_newest_first():
         assert "GCS_BUCKET 未設定" in tools.output_sink.list_gcs_logs()["note"]
 
 
+def test_empty_gcs_prefix_uses_the_safe_default_for_listing_and_fetching():
+    now = datetime.now(timezone.utc)
+    blobs = [_FakeBlob("shapechange/run_a__rough_01.jpg", now),
+             _FakeBlob("numbertales/run_b__rough_01.jpg", now)]
+    with _fake_gcs(blobs):
+        for configured in ("", "/", "///"):
+            with patch.dict(os.environ, {"GCS_PREFIX": configured}):
+                assert tools.output_sink._gcs_prefix() == "shapechange"
+                listed = tools.output_sink.list_gcs_logs()
+                assert [item["object_key"] for item in listed["objects"]] == [
+                    "shapechange/run_a__rough_01.jpg"]
+                outside = tools.output_sink.fetch_gcs_image_b64("numbertales/run_b__rough_01.jpg")
+                assert outside["content"] == "" and "shapechange/ の下" in outside["note"]
+
+
 def test_gcs_image_comes_only_from_this_servers_prefix():
     blobs = [_FakeBlob("shapechange/run_a__rough_01.jpg", None, b"jpeg-bytes"),
              _FakeBlob("numbertales/other.jpg", None, b"other")]
@@ -219,6 +236,29 @@ def test_observation_failure_waits_for_the_users_answer():
         tools.MANAGER.answer_reference(job_id, waiting["confirmation"]["request_id"], False)
         done = _wait(job_id, ("pending", "running", "awaiting_confirmation"))
     assert done["status"] == "succeeded" and done["result"]["status"] == "cancelled" and not generator.calls
+
+
+def test_concurrent_canva_refreshes_are_serialized():
+    from src.tools import refresh_canva_token as canva_token
+
+    active = maximum = 0
+    active_lock = threading.Lock()
+
+    def refresh_and_store():
+        nonlocal active, maximum
+        with active_lock:
+            active += 1
+            maximum = max(maximum, active)
+        time.sleep(0.05)
+        with active_lock:
+            active -= 1
+        return {"status": "ok"}
+
+    with patch.object(canva_token, "refresh_and_store", side_effect=refresh_and_store):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: tools.refresh_canva_token(), range(2)))
+    assert results == [{"status": "ok"}, {"status": "ok"}]
+    assert maximum == 1
 
 
 def test_lists_for_choosing_inputs():

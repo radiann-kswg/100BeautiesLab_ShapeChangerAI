@@ -213,9 +213,13 @@ def refresh_and_store(env_file: Path | None = None) -> dict[str, Any]:
     tokens = refresh_access_token()
     env_file = env_file or project_root() / ".env"
     saved: list[str] = []
+    env_file_note = ""
     if env_file.is_file():
-        update_env_file(env_file, tokens)
-        saved.append(".env")
+        try:
+            update_env_file(env_file, tokens)
+            saved.append(".env")
+        except (OSError, UnicodeError) as err:
+            env_file_note = type(err).__name__
     reason = _store_in_secret_manager(tokens)
     if not reason:
         saved.append("Secret Manager")
@@ -225,7 +229,10 @@ def refresh_and_store(env_file: Path | None = None) -> dict[str, Any]:
     else:
         message += ("保存はできませんでした。新しいリフレッシュトークンはこのサーバーのメモリーにしかなく、"
                     "サーバーが止まると失われます（その場合は PC で取り直して登録し直す）。")
-    return {"status": "ok", "saved_to": saved, "secret_manager_note": reason, "message": message}
+    if env_file_note:
+        message += f" .env への保存に失敗しました ({env_file_note})。"
+    return {"status": "ok", "saved_to": saved, "secret_manager_note": reason,
+            "env_file_note": env_file_note, "message": message}
 
 
 def push_secrets(project: str, run: Callable[..., Any] = subprocess.run) -> None:

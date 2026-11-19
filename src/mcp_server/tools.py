@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -20,6 +21,7 @@ from . import output_sink
 from .jobs import MANAGER
 
 DRIVE_LABEL_PREFIX = "shapechange_"       # Drive / GCS 上で形状変化の出力だと分かるようにする
+_CANVA_REFRESH_LOCK = threading.Lock()
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
@@ -140,7 +142,8 @@ def refresh_canva_token() -> dict[str, Any]:
     from ..tools import refresh_canva_token as canva_token
 
     try:
-        return canva_token.refresh_and_store()
+        with _CANVA_REFRESH_LOCK:
+            return canva_token.refresh_and_store()
     except canva_token.CanvaTokenError as err:
         return {"status": "error", "message": str(err)}
 
