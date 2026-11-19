@@ -111,7 +111,7 @@ python -m src.tools.refresh_canva_token                        # 初回: ブラ�
 python -m src.tools.refresh_canva_token --use-refresh-token    # 2 回目以降: ブラウザなしで更新する
 ```
 
-アクセストークンは短い時間で失効する。失効していると Canva 仕上げだけが省かれ、完成画像は Canva を通さないものになる（理由は `run_meta.json` の Stage 5 の記録に残る）。そのときは `--use-refresh-token` か、コネクタの `shapechange_refresh_canva_token` で更新してから生成し直す。コネクタのツールは、新しいトークンを `.env`（あれば）と Secret Manager（使えれば）へ保存し、保存できた場所を結果の `saved_to` に返す。
+アクセストークンは短い時間で失効する。失効していると Canva 仕上げだけが省かれ、完成画像は Canva を通さないものになる（理由は `run_meta.json` の Stage 5 の記録に残る）。そのときは `--use-refresh-token` か、コネクタの `shapechange_refresh_canva_token` で更新してから生成し直す。コネクタのツールは、新しいトークンを `.env`（あれば）と Secret Manager（使えれば）へ保存し、保存できた場所を結果の `saved_to` に返す。Secret Manager では、新しい版を足したあとに 1 つ前の版を消す（入れ替わる前のトークンはもう使えず、版は残っているだけで課金されるため）。
 
 リフレッシュトークンは 1 回使うと新しいものに入れ替わる。PC の `.env` と Secret Manager が同じトークンを持っているとき、片方で更新すると、もう片方のリフレッシュトークンは使えなくなる。使えなくなったら、PC で引数なしの取得からやり直し、Cloud Run で使う分は登録し直す（[docs/deploy-cloud-run.md](../docs/deploy-cloud-run.md) の「Canva の連携」）。
 
@@ -167,7 +167,7 @@ Claude Desktop などに登録する例（パスは環境に合わせる）:
 
 完成画像は `OUTPUT_SINK`（`local` / `drive` / `gcs`）へ届ける。Drive では `DRIVE_FOLDER_ID` の直下に `shapechange_{実行名}__…` の名前で置く。中間画像は Drive へ上げず、`GCS_BUCKET` があれば GCS、無ければサーバー内に残す。ジョブはメモリー上にあり、サーバーを再起動すると消える（実行の記録は `outputs/` に残る）。
 
-GCS に置いた中間画像は、`shapechange_list_gcs_logs` で後から一覧できる。バケットを直接見るので、サーバーが再起動して `outputs/` が消えたあとも使える。GeneratorsAI の `numbertales_list_gcs_logs`・`numbertales_get_gcs_image` と同じ作りで、違いは、取得できる画像を `GCS_PREFIX`（既定 `shapechange`）の下に限っていること。
+GCS に置いた中間画像は、`shapechange_list_gcs_logs` で後から一覧できる。バケットを直接見るので、サーバーが再起動して `outputs/` が消えたあとも使える。GeneratorsAI の `numbertales_list_gcs_logs`・`numbertales_get_gcs_image` と同じ作りで、違いは 2 つ。取得できる画像を `GCS_PREFIX`（既定 `shapechange`）の下に限っていることと、一覧の既定の件数が 50 件であること（GeneratorsAI は 300 件）。
 
 VM では、GeneratorsAI と同じく、使うときだけ起動して SSH 越しの stdio でつなぐ。配置と更新の手順は [docs/deploy-vm.md](../docs/deploy-vm.md)。
 

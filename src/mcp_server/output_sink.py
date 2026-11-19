@@ -287,11 +287,12 @@ def _gcs_prefix() -> str:
     return os.getenv(ENV_GCS_PREFIX, "shapechange").strip("/")
 
 
-def list_gcs_logs(limit: int = 300, since_days: int = 49) -> dict[str, Any]:
+def list_gcs_logs(limit: int = 50, since_days: int = 49) -> dict[str, Any]:
     """GCS に残っている画像（中間画像と、GCS へ直接置いた完成画像）を新しい順に返す。
 
     バケットを直接見るので、サーバーを再起動してジョブや ``outputs/`` が消えたあとも、
-    過去 ``since_days`` 日（既定 49 日）の分を署名付き URL と一緒に返せる。
+    過去 ``since_days`` 日（既定 49 日）の分を署名付き URL と一緒に返せる。``limit`` の既定は 50 件
+    （GeneratorsAI は 300 件。Cloud Run では署名が 1 件ごとに IAM の呼び出しになり、URL も長いため絞った）。
 
     Returns
     -------

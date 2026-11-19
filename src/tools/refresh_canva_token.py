@@ -190,11 +190,22 @@ def _store_in_secret_manager(values: dict[str, str]) -> str:
         client = secretmanager.SecretManagerServiceClient()
         # リフレッシュトークンを先に保存する（こちらを失うと、ブラウザでの取り直しが必要になる）
         for name in sorted(values, key=lambda name: name != REFRESH_ENV):
-            client.add_secret_version(request={"parent": f"projects/{project}/secrets/{name}",
-                                               "payload": {"data": values[name].encode("utf-8")}})
+            version = client.add_secret_version(request={"parent": f"projects/{project}/secrets/{name}",
+                                                         "payload": {"data": values[name].encode("utf-8")}})
+            _destroy_previous_version(client, version.name)
     except Exception as err:  # noqa: BLE001 — 資格情報・権限・シークレットの有無など
         return type(err).__name__
     return ""
+
+
+def _destroy_previous_version(client: Any, new_version: str) -> None:
+    """1 つ前の版を消す。入れ替わる前のトークンはもう使えず、版は残っているだけで課金されるため。"""
+    secret, _, number = new_version.rpartition("/versions/")
+    if number.isdigit() and int(number) > 1:
+        try:
+            client.destroy_secret_version(request={"name": f"{secret}/versions/{int(number) - 1}"})
+        except Exception:  # noqa: BLE001 — 消す権限が無くても、新しい版の保存はできている
+            pass
 
 
 def refresh_and_store(env_file: Path | None = None) -> dict[str, Any]:

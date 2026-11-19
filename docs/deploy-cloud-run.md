@@ -19,7 +19,7 @@ GeneratorsAI との違いは 2 つ。GitHub Actions からの自動デプロイ�
 
 ## 公開範囲について
 
-自動承認の OAuth は利用者の本人確認をしない。URL を知っていれば、誰でも課金を伴う生成を呼べる（GeneratorsAI のコネクタも同じ）。URL は公開の場に書かない。このリポジトリの内容は公開リポジトリへ写すので、実際の URL とプロジェクト番号はここにも書かない。止める場合:
+自動承認の OAuth は利用者の本人確認をしない。URL を知っていれば、誰でも課金を伴う生成を呼べる（GeneratorsAI のコネクタも同じ）。GCS に残った中間画像の一覧と取得、Canva のトークンの更新も、同じように呼べる。URL は公開の場に書かない。このリポジトリの内容は公開リポジトリへ写すので、実際の URL とプロジェクト番号はここにも書かない。止める場合:
 
 ```sh
 # 公開をやめる（サービスは残る。コネクタからは呼べなくなる）
@@ -56,7 +56,7 @@ Canva 仕上げを Cloud Run でも行う場合の手順。連携の作成とト
    ```
 
 2. 上の「配置と更新」のコマンドで配置し直す。4 件がそろっていれば「Canva の連携（SHAPECHANGE_CANVA_*）を渡します。」と表示される。
-3. Cloud Run のサービスアカウントに、4 件を読む権限（`roles/secretmanager.secretAccessor`）と、トークンの 2 件へ版を足す権限（`roles/secretmanager.secretVersionAdder`）があることを確かめる。版を足す権限が無いと、`shapechange_refresh_canva_token` で更新したトークンを保存できず、結果の `saved_to` が空になる。
+3. Cloud Run のサービスアカウントに、4 件を読む権限（`roles/secretmanager.secretAccessor`）と、トークンの 2 件の版を足して消す権限（`roles/secretmanager.secretVersionManager`）があることを確かめる。版を足せないと、`shapechange_refresh_canva_token` で更新したトークンを保存できず、結果の `saved_to` が空になる。版を消せないと、更新のたびに古い版が残り、その数だけ Secret Manager の料金がかかる。
 
 Cloud Run は、インスタンスの起動時に Secret Manager の最新版を読む。アクセストークンは短い時間で失効するので、Canva 仕上げを使う生成の前に `shapechange_refresh_canva_token` で更新する。
 

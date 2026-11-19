@@ -147,10 +147,17 @@ def test_server_refresh_saves_the_tokens_and_never_returns_them():
 
 def test_secret_manager_gets_the_refresh_token_first():
     added: list = []
+    destroyed: list = []
 
     class Client:
         def add_secret_version(self, request):
             added.append((request["parent"], request["payload"]["data"]))
+            return types.SimpleNamespace(name=f"{request['parent']}/versions/{len(added) + 1}")
+
+        def destroy_secret_version(self, request):
+            destroyed.append(request["name"])
+            if len(destroyed) == 2:
+                raise PermissionError("destroy は許可されていない")
 
     secretmanager = types.ModuleType("google.cloud.secretmanager")
     secretmanager.SecretManagerServiceClient = Client
@@ -166,6 +173,9 @@ def test_secret_manager_gets_the_refresh_token_first():
         assert canva_token._store_in_secret_manager(dict(_TOKENS)) == ""
     assert added == [("projects/project-from-credentials/secrets/SHAPECHANGE_CANVA_REFRESH_TOKEN", b"new-refresh"),
                      ("projects/project-from-credentials/secrets/SHAPECHANGE_CANVA_ACCESS_TOKEN", b"new-access")]
+    # 入れ替わる前の版は消す（残すだけで課金される）。消せなくても、保存は成功として扱う
+    assert destroyed == ["projects/project-from-credentials/secrets/SHAPECHANGE_CANVA_REFRESH_TOKEN/versions/1",
+                         "projects/project-from-credentials/secrets/SHAPECHANGE_CANVA_ACCESS_TOKEN/versions/2"]
 
     auth.default = lambda: (_ for _ in ()).throw(RuntimeError("no credentials"))
     with patch.dict(sys.modules, fakes), _env():

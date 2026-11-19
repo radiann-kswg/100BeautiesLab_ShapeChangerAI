@@ -144,7 +144,7 @@ class RunInput(_Base):
 
 
 class ListGcsLogsInput(_Base):
-    limit: int = Field(300, ge=1, le=2000, description="返す最大件数")
+    limit: int = Field(50, ge=1, le=2000, description="返す最大件数（既定 50）")
     since_days: int = Field(49, ge=1, le=3650, description="この日数以内に作られた画像を対象にする（既定 49 日）")
 
 
