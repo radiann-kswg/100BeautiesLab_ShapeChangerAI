@@ -28,11 +28,13 @@ Claude Desktop のプロジェクト指示を更新するときは、Codex に�
 2. 仕上がりの輪郭、縦横比と厚み、顔の位置、手足・衣装・付属物の見え方をプロンプトに落とす。途中経過を描く場合は、元の姿・途中・変形完了で何が変わるかを指定する。
 3. OpenAI の GPT Image または Gemini の Nano Banana で生成・編集する。完成画像の仕上げと書き出しには Canva も使える（画像の生成には使わない）。結果を元設定と見比べ、輪郭とキャラクターの識別に必要な特徴を確認する。再生成では変えた点を記録し、別の実行フォルダーに保存する。
 
-GeneratorsAI の既存生成機能を実行する場合は、同リポジトリの `.agents/skills/numbertales-imagegen/SKILL.md` を先に読む。参考にする実行記録の仕様は、同リポジトリの `docs/output-and-logs.md` にある。
+GeneratorsAI の既存生成機能を実行する場合は、同リポジトリの `.agents/skills/100btys-lab-imagegen/SKILL.md` を先に読む。参考にする実行記録の仕様は、同リポジトリの `docs/output-and-logs.md` にある。
 
 ## 生成パイプライン
 
 `src/` のパイプラインは、上の手順の入力選定・プロンプト・生成・検査・記録を 1 コマンドで行う。既定は GeneratorsAI と同じ区切りの 5 段階（プロンプト → 公式設定画の観察 → ラフ → 検査と修正 → 清書）。オプションと構成は [src/README.md](src/README.md)、合意した要件と保留事項は [docs/requirements-5stage-connector.md](docs/requirements-5stage-connector.md) にある。
+
+パイプラインかコネクタで形状変化絵を生成・改稿する依頼では、先に [`.agents/skills/100btys-lab-tf-imagegen/SKILL.md`](.agents/skills/100btys-lab-tf-imagegen/SKILL.md) を読み、その手順で進める。
 
 ```sh
 pip install -r requirements.txt
