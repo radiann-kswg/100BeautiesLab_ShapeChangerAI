@@ -138,7 +138,8 @@ def _print_characters(work_key: str | None) -> None:
     for record in dataset.get_characters():
         if work and record.get("work_key") != work:
             continue
-        print(f"{record.get('work_key')}\t{dataset.identity_label(record)}\t{dataset.display_name(record)}")
+        print(f"{record.get('work_key')}\t{dataset.full_badge(record)}\t{dataset.identity_label(record)}"
+              f"\t{dataset.display_name(record)}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -147,7 +148,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="創作キャラクターの形状変化イラストを生成する。",
     )
     who = parser.add_argument_group("キャラクター")
-    who.add_argument("--badge", help="番号・バッジ・作品内の識別子（例: 57, 2B, ENE）")
+    who.add_argument("--badge", help="バッジ（例: 57, 2B, EZ1, ENE）。作品コード付き（NTS-57, SAR-EZ1）なら --work は不要。"
+                                     "番号と作品内の識別子（2-alt, Mouse）も使える")
     who.add_argument("--name", help="名前の一部（例: スフィリア）")
     who.add_argument("--work", help="作品キー（例: NumberTales, SinisterChangingGirls）")
     who.add_argument("--form", choices=dataset.FORMS, help="変形前の形態（形態を持つ作品のみ。既定 humanoid）")

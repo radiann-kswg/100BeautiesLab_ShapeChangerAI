@@ -33,8 +33,30 @@ def test_find_allowed_character_by_badge_and_name():
     assert dataset.character_slug(scoped) == "NumberTales-57"
     alt = dataset.find_character(badge="2B")       # Num_Badge → Num "2-alt"
     assert dataset.identity_label(alt) == "2-alt"
-    sphiria = dataset.find_character(name="スフィリア")
+    # 2026-11-19 の上流で #DB_Regioministrators が許可され、スフィリアは 2 レコードになった。名前だけでは絞れない
+    sphiria = dataset.find_character(badge="SCG-ENE")
     assert dataset.character_slug(sphiria) == "SinisterChangingGirls-ENE"
+
+
+def test_characters_are_found_by_their_index_badge():
+    # バッジは作品別 db_type.json の $IndexDef.$badge の宣言どおり（Num_Badge / 辞書の Beast_Badge / 方位そのまま）
+    mouse = dataset.find_character(badge="EZ1", work_key="ShauErRiders")
+    assert dataset.character_slug(mouse) == "ShauErRiders-Mouse" and dataset.full_badge(mouse) == "SAR-EZ1"
+    # 作品コード付きなら作品の指定は要らない。大文字小文字は問わない
+    for badge, slug in (("sar-ez1", "ShauErRiders-Mouse"), ("NTS-2B", "NumberTales-2-alt"),
+                        ("SCG-ENE", "SinisterChangingGirls-ENE"), ("NTS-57", "NumberTales-57")):
+        assert dataset.character_slug(dataset.find_character(badge=badge)) == slug
+    # 番号と作品内の識別子も引き続き使える（ハイフン入りの番号を作品コードと取り違えない）
+    assert dataset.character_slug(dataset.find_character(badge="2-alt")) == "NumberTales-2-alt"
+    assert dataset.character_slug(dataset.find_character(badge="Mouse", work_key="ShauErRiders")) == "ShauErRiders-Mouse"
+    assert dataset.character_slug(dataset.find_any("SAR-EZ4")) == "ShauErRiders-Rabbit"
+    # 許可されたキャラクターは全員、作品コード付きのバッジ 1 語で本人に届く
+    # 識別子 "W" は DB をまたいで重なる。バッジ "W" は #DB_Primary、"AW" は #DB_Regioministrators
+    assert dataset.find_character(badge="SCG-W")["db_key"] == "#DB_Primary"
+    assert dataset.find_character(badge="SCG-AW")["db_key"] == "#DB_Regioministrators"
+    for record in dataset.get_characters():
+        found = dataset.find_character(badge=dataset.full_badge(record))
+        assert dataset.character_slug(found) == dataset.character_slug(record), dataset.full_badge(record)
 
 
 def test_denied_and_ambiguous_lookups_do_not_return_records():
@@ -43,7 +65,7 @@ def test_denied_and_ambiguous_lookups_do_not_return_records():
     assert denied, "拒否設定のレコードが manifest にある前提"
     target = next(r for r in denied if (r.get("data") or {}).get("Name_JP"))
     name = str(target["data"]["Name_JP"]).split("\n")[0]
-    for query in (dict(name=name, work_key=target["work_key"]), dict(name="扇"), dict(badge="no-such-badge")):
+    for query in (dict(name=name, work_key=target["work_key"]), dict(name="扇"), dict(name="スフィリア"), dict(badge="no-such-badge")):
         try:
             dataset.find_character(**query)
         except dataset.CharacterLookupError:
@@ -66,7 +88,7 @@ def test_summary_and_references_use_only_the_target_character():
         assert ref["path"].is_file() and data_root in ref["path"].parents
         assert "NTS-57" in ref["path"].name          # 本人の画像だけ
     # 形態データの無い作品でも要約できる。身長の複数値は先頭の数値を採る
-    sphiria = dataset.summarize_character(dataset.find_character(name="スフィリア"))
+    sphiria = dataset.summarize_character(dataset.find_character(badge="SCG-ENE"))
     assert sphiria["form"] is None and sphiria["height_cm"] == 159.0
     # 文章の設定があるかどうかは原典の更新で変わるので、合成レコードで確かめる
     assert not dataset.summarize_character({"data": {}})["has_text_design"]

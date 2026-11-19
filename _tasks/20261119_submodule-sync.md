@@ -71,3 +71,49 @@
 ## 追記（同日 12:45。上の未コミット分のコミット）
 
 - 12:31 の追記にある未コミット分（テスト 1 件、`src/README.md` の 3 段落、追記）は、公開用ブランチを作る前に内容をそろえるため、引き継ぎ側の Claude が 1 コミットにまとめた。コミット前に `tests/test_*.py` の全 6 ファイル 45 件が成功することを確かめた。
+
+## 追記（同日 13:05。バッジでのキャラクター指定）
+
+ユーザーの依頼「GeneratorsAI も ShapeChangerAI も Badge でキャラクターを指定できるようにする」による変更。GeneratorsAI 側のセッションが行い、`develop` に 1 コミットで入れた（push はしていない）。
+
+- `--badge` が CreationsDB のインデックスバッジを受け付ける。獣爾騎兵は `EZ1`（従来は獣名の `Mouse` だけ）、NumberTales は `57` / `2B`、豹変系女子は `ENE`。作品コード付き（`NTS-57` / `SAR-EZ1`）なら `--work` は要らない。番号と作品内の識別子（`2-alt` / `Mouse`）は従来どおり使える。
+- バッジは作品別 `db_type.json` の `$IndexDef.$badge` の宣言から組み立てる（`src/utils/dataset.py` の `record_badge()`。CreationsDB の `lib/graph/graph-badge.js` と同じ規則）。獣爾騎兵は辞書 `dict_Beast.json` の `Beast_Badge` を引く。番号や獣名から機械的には作らない。
+- `--list-characters` とコネクタの `shapechange_list_characters` に、作品コード付きのバッジを足した（CLI は 2 列目、コネクタは `badge`）。実行フォルダー名などに使う識別子（`ShauErRiders-Mouse`）は変えていない。
+- 検証: `tests/test_*.py` 全 6 ファイル 46 件成功（追加 1 件）。許可キャラクター 138 件すべてが、作品コード付きのバッジ 1 語で本人に届く。`--badge SAR-EZ1 --mode 4 --dry-run` と `--joint SAR-EZ1:0,SAR-EZ4:3 --dry-run` が成功。生成の API は呼んでいない。
+
+## 自動同期の追補 — 2026-11-19（スケジュール実行・サブモジュール追従ボット）
+
+| サブモジュール | 追跡先 | 旧 | 新 | 判定 |
+|---|---|---|---|---|
+| `_creations-ai` | origin/master | bc86099 | b7ccb20 | UPDATED |
+| `_creations-ai/creations-db`（ネスト） | CreationsAI の gitlink | 8484bb1 | 688a349 | 親の記録に追従 |
+| `VRCShader_ShapeChange` | origin/main | 5613487 | 5613487 | NO-CHANGE |
+
+取り込み範囲:
+
+```text
+b7ccb20 chore: sync ai-dataset (creations-db@688a3492) — ai_training allowed: 187 -> 191 [skip ci]
+
+ 18 files changed, 112 insertions(+), 85 deletions(-)
+
+creations-db 8484bb1..688a349:
+688a3492 AIHints調整(対象DB拡張周り) 続き
+563a4763 AIHints調整(対象DB拡張周り)
+3e3e52f0 Merge branch 'develop' into addon-ai-tag
+1c70567d DB情報追加(獣爾騎兵＆豹変系女子) `addon-ai-tag`向け
+09b69694 AIHints拡張(獣爾騎兵＆豹変系女子) 続き
+44805400 AIHints拡張(獣爾騎兵＆豹変系女子)
+ 23 files changed, 3692 insertions(+), 63 deletions(-)
+```
+
+### 最適化メモ
+
+- 差分把握: CreationsAI は dataset の再生成のみ（manifest のフィールド追加・削除なし）。豹変系女子 `#DB_Regioministrators` の AI 利用が許可され（許可 187→191 件）、獣爾騎兵・豹変系女子の AIHints が拡張された（AIHints 付き 122→139 件）。
+- 影響判定: スキーマ・フィールド名・API・参照パスの変更はない。ただし既存テスト 3 件が失敗し、データ変化による実害を 2 点確認した。
+  1. 新しく許可された Regioministrators の 4 件は作品内の識別子が `W`/`X`/`Y`/`Z`（バッジは `AW`〜`AZ`）で、`W` が `#DB_Primary` の神夜崎 ユノ（方位 `W`）と重なる。扇 零夏・スフィリアは Primary`ENE` と Regioministrators`AW` の 2 レコードになった。
+  2. 名前「スフィリア」が同じ作品内で 2 件に該当し、名前検索が複数該当エラーになる（仕様どおりの挙動）。
+- 実施した変更:
+  - `src/utils/dataset.py`: `find_character(badge=...)` は Num・Num_Badge・インデックスバッジで先に照合し、該当が無いときだけ作品内の識別子（`Mouse` / `W`）で探す。`SCG-W` はユノ、`SCG-AW` は Regioministrators のスフィリアに届く。
+  - `tests/test_dataset_gate.py`: スフィリアの指定を `SCG-ENE` に変え、名前だけの指定が絞れないこと、`SCG-W`/`SCG-AW` の解決を追加。
+- 未対応（PR 時のレビュー所見）: `character_slug()` は識別子を使うため、ユノと Regioministrators のスフィリアがどちらも `SinisterChangingGirls-W` になる。実行フォルダーは run-id で分かれるが、記録上の識別は紛らわしい。
+- テスト結果: 課金キーを空にして `python -m pytest tests -q` → 46 件成功。

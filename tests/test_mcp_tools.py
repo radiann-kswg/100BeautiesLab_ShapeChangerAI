@@ -155,7 +155,7 @@ def test_lists_for_choosing_inputs():
     modes = tools.list_modes()
     assert len(modes) == 16 and modes[4]["name"] == "真球" and modes[14]["limbs"] == "merged"
     characters = tools.list_characters("NumberTales")
-    assert {"work": "#Works_NumberTales", "id": "57", "name": "57(イズナ)"} in characters
+    assert {"work": "#Works_NumberTales", "badge": "NTS-57", "id": "57", "name": "57(イズナ)"} in characters
     assert all(item["work"] == "#Works_NumberTales" for item in characters)
 
 

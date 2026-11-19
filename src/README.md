@@ -70,8 +70,8 @@ PowerShell で `python` が Microsoft Store のエイリアスに当たって起
 
 | オプション | 内容 |
 | --- | --- |
-| `--badge` / `--name` / `--work` | キャラクターの指定。`--badge` は番号・バッジ・作品内の識別子（`57`, `2B`, `ENE`）、`--name` は名前の一部 |
-| `--joint` | `ID:形状番号` を 2〜4 件（例 `85:0,73:3`）。ID は番号か名前の一部 |
+| `--badge` / `--name` / `--work` | キャラクターの指定。`--badge` は CreationsDB のバッジ（`57`, `2B`, `EZ1`, `ENE`）。作品コード付き（`NTS-57`, `SAR-EZ1`）なら `--work` は要らない。番号と作品内の識別子（`2-alt`, `Mouse`）も使える。`--name` は名前の一部。バッジは `--list-characters` の 2 列目に出る |
+| `--joint` | `ID:形状番号` を 2〜4 件（例 `85:0,73:3` / `SAR-EZ1:0,SAR-EZ4:3`）。ID はバッジ・番号・名前の一部 |
 | `--natural` | 自然文の依頼。複数に読める形状語は代表の形状に決め打ちする（表は `pipeline/natural_parser.py`） |
 | `--form` | 変形前の形態（`humanoid` / `corefolder`。形態を持つ作品のみ） |
 | `--mode` | 形状番号 0〜15 |
