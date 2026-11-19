@@ -4,5 +4,5 @@
 	branch = master
 [submodule "VRCShader_ShapeChange"]
 	path = VRCShader_ShapeChange
-	url = https://github.com/radiann-kswg/VRCShader_ShapeChange-Public.git
+	url = https://github.com/radiann-kswg/VRCShader_ShapeChange.git
 	branch = main

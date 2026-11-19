@@ -52,8 +52,8 @@
 
 | 項目 | 決定 |
 | --- | --- |
-| 公開の形 | GitHub は非公開リポジトリの一部のブランチだけを公開できないので、新しい公開リポジトリを作る。今の非公開リポジトリは開発用に残す |
-| 公開リポジトリ | このリポジトリは `100BeautiesLab_ShapeChangerAI-Public`、シェーダーは `VRCShader_ShapeChange-Public`。どちらも、履歴を持たない `public` ブランチを公開側の `main` へ push する |
+| 公開の形 | GitHub は非公開リポジトリの一部のブランチだけを公開できないので、新しい公開リポジトリを作る。それまでの非公開リポジトリは開発用に残す |
+| リポジトリの名前 | 公開リポジトリが元の名前を引き継ぐ（`100BeautiesLab_ShapeChangerAI` と `VRCShader_ShapeChange`）。開発用は末尾に `-Develop` を付ける（`100BeautiesLab_ShapeChangerAI-Develop` と `VRCShader_ShapeChange-Develop`）。どちらも、開発側の履歴を持たない `public` ブランチを公開側の `main` へ push する |
 | 公開までの順序 | 公開リポジトリは非公開で作り、ラジアンが中身を確かめてから公開へ切り替える |
 | ライセンス | このリポジトリは GeneratorsAI と同じ CC BY-NC 4.0（[LICENCE.md](../LICENCE.md)）。シェーダーは MIT License |
 | シェーダーの公開範囲 | 開発側の配布リスト（`Tools > ShapeChange > Export Shader Only`）にあるファイルだけ。VCC / ALCOM から入れられる VPM パッケージ（`net.numbertales-radiann.shapechange`）にする |

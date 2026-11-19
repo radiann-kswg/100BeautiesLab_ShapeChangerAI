@@ -8,13 +8,13 @@ GeneratorsAI の VM と同じ方針で、GCE の VM `generators-ai`（プロジ�
 
 | 場所 | 内容 |
 | --- | --- |
-| `/opt/shapechanger` | 公開リポジトリ [100BeautiesLab_ShapeChangerAI-Public](https://github.com/radiann-kswg/100BeautiesLab_ShapeChangerAI-Public) の clone（`main`）、`.venv`、`.env`、`outputs/` |
+| `/opt/shapechanger` | 公開リポジトリ [100BeautiesLab_ShapeChangerAI](https://github.com/radiann-kswg/100BeautiesLab_ShapeChangerAI) の clone（`main`）、`.venv`、`.env`、`outputs/` |
 | `/opt/shapechanger/_creations-ai` | キャラクターデータのサブモジュール |
 | `/opt/shapechanger/VRCShader_ShapeChange` | 公開用のシェーダーパッケージのサブモジュール。パイプラインはここの 2 ファイルから寸法を読む |
 
-VM が取得するのは公開リポジトリだけ。非公開の開発用リポジトリ（このリポジトリの `develop`、シェーダーの Unity プロジェクト）と、モデルや検証用のデータは VM に置かない。鍵の登録も要らない。
+VM が取得するのは公開リポジトリだけ。非公開の開発用リポジトリ（`100BeautiesLab_ShapeChangerAI-Develop` と、シェーダーの Unity プロジェクト `VRCShader_ShapeChange-Develop`）と、モデルや検証用のデータは VM に置かない。鍵の登録も要らない。
 
-2026-11-19 より前は、非公開リポジトリを読み取り専用のデプロイキーで clone し、シェーダーの 2 ファイルを PC から `/opt/shapechanger-shape` へ送っていた。[deploy/setup_vm.sh](../deploy/setup_vm.sh) を実行すると公開側へ切り替わる。残った `/opt/shapechanger-shape` と `~/.ssh/shapechanger_deploy` はもう使わないので、消して構わない。非公開リポジトリに登録したデプロイキー（`generators-ai VM (read-only)`）も不要になる。
+2026-11-19 より前は、開発用の非公開リポジトリ（いまの `100BeautiesLab_ShapeChangerAI-Develop`）を読み取り専用のデプロイキーで clone し、シェーダーの 2 ファイルを PC から `/opt/shapechanger-shape` へ送っていた。[deploy/setup_vm.sh](../deploy/setup_vm.sh) を実行すると公開側へ切り替わる。残った `/opt/shapechanger-shape` と `~/.ssh/shapechanger_deploy` はもう使わないので、消して構わない。`100BeautiesLab_ShapeChangerAI-Develop` に登録したデプロイキー（`generators-ai VM (read-only)`）も不要になる。
 
 ## 起動と停止
 

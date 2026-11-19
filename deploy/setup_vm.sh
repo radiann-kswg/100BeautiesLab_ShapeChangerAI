@@ -4,7 +4,7 @@
 # 何度実行しても壊れない（clone 済みなら取得し直し、venv 済みなら再利用、.env は毎回作り直す）。
 # 手順の全体は docs/deploy-vm.md。
 #
-# - コードは公開リポジトリ（100BeautiesLab_ShapeChangerAI-Public）から HTTPS で取得する。鍵は要らない。
+# - コードは公開リポジトリ（100BeautiesLab_ShapeChangerAI）から HTTPS で取得する。鍵は要らない。
 # - サブモジュールは _creations-ai（キャラクターデータ）と VRCShader_ShapeChange（公開用のシェーダー
 #   パッケージ）を取得する。どちらも公開リポジトリで、モデルや検証用のデータは入っていない。
 # - .env の秘密の値は Secret Manager から読む（VM のサービスアカウントで取得。PC を経由しない）。
@@ -12,7 +12,7 @@ set -euo pipefail
 
 APP_DIR=/opt/shapechanger
 BRANCH="${SHAPECHANGE_BRANCH:-main}"
-REPO=https://github.com/radiann-kswg/100BeautiesLab_ShapeChangerAI-Public.git
+REPO=https://github.com/radiann-kswg/100BeautiesLab_ShapeChangerAI.git
 # Secret Manager から読む値。Canva は GeneratorsAI の連携を流用しないので入れない
 SECRETS="GEMINI_API_KEY OPENAI_API_KEY DRIVE_FOLDER_ID DRIVE_CLIENT_ID DRIVE_CLIENT_SECRET DRIVE_REFRESH_TOKEN"
 # 作り直しても既存の .env から引き継ぐ行（秘密でない設定）
@@ -30,7 +30,7 @@ sudo chown "$USER:$USER" "$APP_DIR"
 if [ ! -d "$APP_DIR/.git" ]; then
   git clone -q --branch "$BRANCH" "$REPO" "$APP_DIR"
 else
-  # 非公開リポジトリをデプロイキーで clone していた頃の VM も、ここで公開側へ切り替わる。
+  # 開発用の非公開リポジトリをデプロイキーで clone していた頃の VM も、ここで公開側へ切り替わる。
   # 公開側は履歴が別系統なので、pull ではなく取得した内容へ合わせる（追跡ファイルの手元の変更は捨てる）
   git -C "$APP_DIR" config --unset core.sshCommand || true
   git -C "$APP_DIR" remote set-url origin "$REPO"

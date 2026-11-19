@@ -49,7 +49,7 @@ python -m src.mcp_server                                             # コネク
 - Canva は、このリポジトリ用の連携（`SHAPECHANGE_CANVA_ACCESS_TOKEN`）だけを使う。GeneratorsAI の `CANVA_*` を流用しない。
 - キャラクターは manifest の `ai_training.allowed` が true のレコードだけを受け付ける。追加の参照画像（`--ref`）は `references/` か `outputs/` に置いたファイルに限る。
 - 形状の寸法は実行のたびに `VRCShader_ShapeChange` のシェーダーから読む。サブモジュールの更新後に読み取りが止まった場合は、`src/shape/vrc_source.py` をシェーダーの記述に合わせる。輪郭や顔の位置の記述は `src/shape/mode_descriptions.json` で直す。
-- `VRCShader_ShapeChange/` は公開用のシェーダーパッケージで、モデルや検証用のデータを含まない。VM はこのサブモジュールをそのまま取得する。Cloud Run のイメージには、`python -m src.shape.vm_bundle <空のフォルダー>` が書き出すシェーダーの 2 ファイルだけを入れる。シェーダーの開発用リポジトリの作業コピー（モデルや検証用のデータがある）は、VM にもイメージにも置かない。
+- `VRCShader_ShapeChange/` は公開用のシェーダーパッケージで、モデルや検証用のデータを含まない。VM はこのサブモジュールをそのまま取得する。Cloud Run のイメージには、`python -m src.shape.vm_bundle <空のフォルダー>` が書き出すシェーダーの 2 ファイルだけを入れる。シェーダーの開発用リポジトリ（`VRCShader_ShapeChange-Develop`）の作業コピーにはモデルや検証用のデータがあるので、VM にもイメージにも置かない。
 - `src/` を変更したとき、サブモジュールを更新したときは `tests/` のテストを実行する（生成 API は呼ばない）。
 
 ## 著作物の扱い
@@ -69,13 +69,13 @@ python -m src.mcp_server                                             # コネク
 
 ## Git ブランチ運用
 
-GeneratorsAI と同じ分け方にする。
+GeneratorsAI と同じ分け方にする。開発は非公開の `100BeautiesLab_ShapeChangerAI-Develop` で進め、公開リポジトリ `100BeautiesLab_ShapeChangerAI` へは `public` ブランチの内容だけを出す。
 
 | ブランチ | 役割 |
 | --- | --- |
 | `main` | 公開とデプロイの基準。エージェントは直接コミット・push しない |
 | `develop` | 開発の統合先。実装、プロンプトや形状の記述の調整、ドキュメントの更新、サブモジュールの追従コミットはここで進める |
-| `public` | 公開用。非公開の履歴とつながない別系統で、`main` と同じ内容を 1 コミットずつ写す。公開リポジトリ `100BeautiesLab_ShapeChangerAI-Public` の `main` へ push する |
+| `public` | 公開用。非公開の履歴とつながない別系統で、`main` と同じ内容を 1 コミットずつ写す。公開リポジトリの `main` へ push する |
 
 - `develop` から `main` への反映は Pull Request で行う。`main` へ直接マージ・push しない。
 - 長くかかる作業は `develop` から `feature/…` や `fix/…` の作業ブランチを切り、終わったら `develop` へ戻す。
@@ -88,7 +88,7 @@ GeneratorsAI と同じ分け方にする。
 | --- | --- |
 | `_creations-ai/` | CreationsAI。キャラクターと AI 利用条件を `ai-dataset/manifest.jsonl` で照合する |
 | `_creations-ai/creations-db/` | CreationsAI が固定する CreationsDB。キャラクター原典は `data/` にある |
-| `VRCShader_ShapeChange/` | 形状変化シェーダーの公開用パッケージ（[VRCShader_ShapeChange-Public](https://github.com/radiann-kswg/VRCShader_ShapeChange-Public)）。形状・部位配置の参照には `README.md` を使う。寸法はルートの `ShapeChange.hlsl` と `ShapeChangeProperties.lilblock` からパイプラインが読む |
+| `VRCShader_ShapeChange/` | 形状変化シェーダーの公開用パッケージ（[VRCShader_ShapeChange](https://github.com/radiann-kswg/VRCShader_ShapeChange)）。形状・部位配置の参照には `README.md` を使う。寸法はルートの `ShapeChange.hlsl` と `ShapeChangeProperties.lilblock` からパイプラインが読む |
 
 初回取得と親リポジトリの切り替え後は、ルートで次を実行する。サブモジュールはどれも公開リポジトリ。
 

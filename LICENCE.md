@@ -28,7 +28,7 @@ CC BY-NC 4.0 で提供されていることを受け、リポジトリ全体に�
 | AI 学習用整形データ（サブモジュール経由） | [100BeautiesLab_CreationsAI](https://github.com/radiann-kswg/100BeautiesLab_CreationsAI) | CC BY-NC 4.0（継承） |
 | 本リポジトリのコード・ドキュメント・プロンプト | 本リポジトリ | CC BY-NC 4.0 |
 | 本リポジトリで生成された画像・出力物（`outputs/` 等） | 本リポジトリ（原著作物の派生物） | CC BY-NC 4.0（継承） |
-| 形状変化シェーダー（サブモジュール `VRCShader_ShapeChange`） | [VRCShader_ShapeChange-Public](https://github.com/radiann-kswg/VRCShader_ShapeChange-Public) | MIT License（本ライセンスの対象外） |
+| 形状変化シェーダー（サブモジュール `VRCShader_ShapeChange`） | [VRCShader_ShapeChange](https://github.com/radiann-kswg/VRCShader_ShapeChange) | MIT License（本ライセンスの対象外） |
 
 原著作物の権利はすべて **RadianN_kswg（ラジアン / 柏木主税）** に帰属します。
 本リポジトリで生成される画像は CC BY-NC 4.0 で保護された創作データに基づく**派生物**であり、
