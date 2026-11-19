@@ -147,5 +147,6 @@ def list_modes() -> list[dict[str, Any]]:
 
 def list_characters(work: str | None = None) -> list[dict[str, Any]]:
     work_key = dataset.normalize_work_key(work)
-    return [{"work": record.get("work_key"), "id": dataset.identity_label(record), "name": dataset.display_name(record)}
+    return [{"work": record.get("work_key"), "badge": dataset.full_badge(record),
+             "id": dataset.identity_label(record), "name": dataset.display_name(record)}
             for record in dataset.get_characters() if not work_key or record.get("work_key") == work_key]

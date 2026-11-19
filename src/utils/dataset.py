@@ -8,6 +8,7 @@ AI 利用可否は manifest の ``ai_training.allowed`` を読むだけで、判
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 from pathlib import Path
@@ -110,10 +111,73 @@ def character_slug(record: dict[str, Any]) -> str:
     return f"{work}-{identity_label(record)}"
 
 
-def _badge_keys(record: dict[str, Any]) -> set[str]:
+@functools.lru_cache(maxsize=64)
+def _db_json(rel: str) -> Any:
+    """CreationsDB の ``data/`` 配下の JSON を読む。読めなければ None。"""
+    try:
+        return json.loads((creations_db_root() / "data" / rel).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def record_badge(record: dict[str, Any]) -> str:
+    """インデックスバッジの本体（"57" / "2B" / "EZ1" / "ENE"）。宣言を読めなければ空文字。
+
+    CreationsDB の ``lib/graph/graph-badge.js`` と同じく、作品別 ``db_type.json`` の
+    ``$IndexDef.$badge`` の宣言から組み立てる（番号や獣名から機械的に作らない）。
+    """
+    work_dir = str(record.get("work_key") or "").lstrip("#")
+    data = record.get("data") or {}
+    types = _db_json(f"{work_dir}/DataBases/db_type.json") or {}
+    index_def = (types.get("$IndexDef_" + str(record.get("db_key") or "").removeprefix("#DB_"))
+                 or types.get("$IndexDef") or {})
+    root, subs = index_def.get("hashTag"), index_def.get("$type")
+    pairs = (data.get(root) if isinstance(subs, list) else {root: data.get(root)}) or {}
+    spec = index_def.get("$badge") or {}
+    keys = spec.get("keys") or [subs[0].get("hashTag") if isinstance(subs, list) and subs else root]
+
+    def value_of(key: Any) -> Any:      # インデックスの値が先、無ければレコードの項目（Num_Badge など）
+        return next((source[key] for source in (pairs, data)
+                     if isinstance(source, dict) and source.get(key) not in (None, "")), None)
+
+    parts: list[str] = []
+    for key in keys:
+        key = {"key": key} if isinstance(key, str) else (key or {})
+        if key.get("whenMissing") and value_of(key["whenMissing"]) is not None:
+            continue
+        piece = value_of(key.get("key"))
+        if piece is None:
+            continue
+        piece = str(piece).strip()
+        if key.get("codeFrom"):
+            # shortcut: 作品別 dict_<キー名>.json の文字列の列だけを引く。$dict の宣言や配列の列は、必要になったら対応する。
+            rows = _db_json(f"{work_dir}/Dictionaries/dict_{key['key']}.json") or []
+            piece = next((str(row[key["codeFrom"]]).strip() for row in rows
+                          if isinstance(row, dict) and str(row.get(key["key"])) == piece
+                          and row.get(key["codeFrom"])), piece)
+        parts.append(f"{key.get('prefix', '')}{piece}")
+    return str(spec.get("separator", "-")).join(parts)
+
+
+def full_badge(record: dict[str, Any]) -> str:
+    """作品コード付きのバッジ（"NTS-57" / "SAR-EZ1"）。公式画像のファイル名に載る表記と同じ。"""
+    work = ((_db_json("db_meta.json") or {}).get("CreationWorks") or {}).get(record.get("work_key")) or {}
+    return "-".join(part for part in (str(work.get("Works_Code") or ""), record_badge(record)) if part)
+
+
+def _split_work_code(badge: str) -> tuple[str, str | None]:
+    """"SAR-EZ1" → ("EZ1", "#Works_ShauErRiders")。作品コードが付いていなければ (badge, None)。"""
+    code, _, body = badge.strip().partition("-")
+    works = (_db_json("db_meta.json") or {}).get("CreationWorks") or {}
+    work = next((key for key, entry in works.items() if isinstance(entry, dict)
+                 and str(entry.get("Works_Code") or "").lower() == code.lower()), None) if code and body else None
+    return (body, work) if work else (badge, None)
+
+
+def _badge_keys(record: dict[str, Any], *, index_only: bool = False) -> set[str]:
     data = record.get("data") or {}
     index = ((record.get("record_identity") or {}).get("index")) or {}
-    values = [data.get("Num"), data.get("Num_Badge"), *index.values()]
+    values = list(index.values()) if index_only else [data.get("Num"), data.get("Num_Badge"), record_badge(record)]
     return {str(v).strip().lower() for v in values if v not in (None, "")}
 
 
@@ -144,6 +208,9 @@ def find_character(
     if (badge is None) == (name is None):
         raise CharacterLookupError("--badge か --name のどちらか一方を指定してください。")
     work = normalize_work_key(work_key)
+    if badge is not None:       # 作品コード付きのバッジ（SAR-EZ1）は、コードから作品を決める
+        badge, coded_work = _split_work_code(str(badge))
+        work = coded_work or work
 
     def matches(record: dict[str, Any]) -> bool:
         if work and record.get("work_key") != work:
@@ -154,6 +221,12 @@ def find_character(
         return any(needle in field.lower() for field in _name_fields(record))
 
     hits = [r for r in load_manifest() if is_character(r) and matches(r)]
+    if badge is not None and not hits:
+        # バッジが無ければ作品内の識別子で探す。識別子は DB をまたいで重なる
+        # （豹変系女子の #DB_Primary "W" と #DB_Regioministrators "W" = バッジ "AW"）ので、バッジを先に見る
+        needle = str(badge).strip().lower()
+        hits = [r for r in load_manifest() if is_character(r) and (not work or r.get("work_key") == work)
+                and needle in _badge_keys(r, index_only=True)]
     allowed = [r for r in hits if generation_gate(r)["allowed"]]
     query = f"badge={badge}" if badge is not None else f"name={name}"
     scope = f"（{work}）" if work else ""

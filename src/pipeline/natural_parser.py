@@ -74,7 +74,7 @@ def parse_request(text: str, ask: Ask | None = None, work_key: str | None = None
         raise ValueError("依頼文からキャラクターを読み取れませんでした。番号か名前を含めてください。")
 
     def badge(record: dict[str, Any]) -> str:
-        return dataset.identity_label(record)
+        return dataset.full_badge(record)
 
     first, first_mode = subjects[0]
     if len(subjects) == 1:

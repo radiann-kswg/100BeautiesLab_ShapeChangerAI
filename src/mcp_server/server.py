@@ -83,7 +83,8 @@ class _Common(_Base):
 
 
 class GenerateCharacterInput(_Common):
-    badge: Optional[str] = Field(None, description="番号・バッジ・作品内の識別子（例: 57, 2B, ENE）")
+    badge: Optional[str] = Field(None, description="バッジ（例: 57, 2B, EZ1, ENE）。作品コード付き（NTS-57, SAR-EZ1）なら work は不要。"
+                                                   "番号と作品内の識別子（2-alt, Mouse）も使える")
     name: Optional[str] = Field(None, description="名前の一部（badge の代わりに指定）")
     mode: int = Field(..., ge=0, le=15, description="形状番号（shapechange_list_modes で一覧）")
     form: Optional[Literal["humanoid", "corefolder"]] = Field(None, description="変形前の形態")
