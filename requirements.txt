@@ -1,0 +1,11 @@
+# 100BeautiesLab_ShapeChangerAI — Python dependencies
+
+# Gemini (Nano Banana)
+google-genai>=1.0.0
+
+# OpenAI (GPT Image。images.edit への複数画像入力に対応した版)
+openai>=1.76.0
+
+# .env の読み込みと参照画像の縮小
+python-dotenv>=1.0.0
+Pillow>=10.0.0

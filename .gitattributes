@@ -1,0 +1,2 @@
+# シェルスクリプトは Windows でも LF のまま取り出す（VM へ scp してそのまま実行するため）
+*.sh text eol=lf

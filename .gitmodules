@@ -1,0 +1,8 @@
+[submodule "_creations-ai"]
+	path = _creations-ai
+	url = https://github.com/radiann-kswg/100BeautiesLab_CreationsAI.git
+	branch = master
+[submodule "VRCShader_ShapeChange"]
+	path = VRCShader_ShapeChange
+	url = https://github.com/radiann-kswg/VRCShader_ShapeChange-Public.git
+	branch = main

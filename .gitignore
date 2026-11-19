@@ -1,0 +1,14 @@
+# Local provider configuration
+.env
+.env.*
+!.env.example
+
+# Local assets and generation runs
+/references/
+/outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/

@@ -1,0 +1,11 @@
+# MCP サーバー用の依存（基本の依存 + MCP + 出力シンク）
+-r requirements.txt
+
+# MCP Python SDK。2.x では mcp.server.fastmcp が無くなるため 1.x に固定（GeneratorsAI と同じ）
+mcp>=1.2.0,<2
+
+# OUTPUT_SINK=drive のとき
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+# OUTPUT_SINK=gcs のとき（中間画像の置き場。使わなければ不要）
+google-cloud-storage>=2.10.0
