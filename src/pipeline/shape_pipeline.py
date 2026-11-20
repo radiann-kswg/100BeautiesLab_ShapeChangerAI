@@ -11,6 +11,7 @@
   Stage 4  ラフを検査し、問題のあるものを修正または作り直す
   Stage 5  検査を通ったラフから完成画像を清書し、Canva で仕上げる
 
+``--object`` は、形状番号の代わりに家具や道具などの物の名前を指定する物品化（寸法を持たない。1 体・1 枚絵だけ）。
 ``--quick`` は Stage 1 のプロンプトで 1 回だけ生成する（検査なし）。加筆の起点があれば、その画像の
 編集 1 回になる。``--images`` は依頼者の入力画像（加筆の起点・赤入れ・構図参考・参考画像）で、役割ごとに
 渡すステージが決まっている（``input_images.py``）。
@@ -19,6 +20,7 @@
     python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --dry-run
     python -m src.pipeline.shape_pipeline --badge 57 --mode 4
     python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --quick
+    python -m src.pipeline.shape_pipeline --badge 57 --object "シャチ型の浮き輪" --dry-run
     python -m src.pipeline.shape_pipeline --joint 85:0,73:3
     python -m src.pipeline.shape_pipeline --natural "85(ハッコ)が箱化している様子"
     python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --iterate-from <実行フォルダー名> --revisions "尾を 7 本に"
@@ -40,6 +42,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..shape.modes import APPENDAGE_CHOICES, LIMB_CHOICES, build_shape_spec
+from ..shape.objects import FACE_CHOICES, build_object_spec, is_object, shape_label
 from ..shape.vrc_source import MODE_COUNT, ShaderSource, ShapeSourceError, load_shader_source, shapechange_root
 from ..utils import dataset
 from ..utils.paths import build_run_dir, default_output_base, git_commit, project_root, references_dir
@@ -196,10 +199,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     shape = parser.add_argument_group("形状")
     shape.add_argument("--mode", type=int, help=f"形状番号 0〜{MODE_COUNT - 1}（--list-modes で一覧）")
+    shape.add_argument("--object", default="", metavar="物の名前",
+                       help="物品化: --mode の代わりに、変形先の物の名前を指定する（例: シャチ型の浮き輪、ソファ、花瓶）。"
+                            "1 体・1 枚絵（--layout single）だけ。変形先の参考画像は --images の役割 object で渡せる")
+    shape.add_argument("--face", choices=FACE_CHOICES,
+                       help="物品化で顔を残すか（既定 keep: 物の表面に顔を描く / none: 描かない）")
     shape.add_argument("--amount", type=float, default=1.0, help="変形量 0〜1。1 未満は途中の姿（layout=single のみ）")
     shape.add_argument("--size", type=float, default=1.0, help="形状の大きさ 0.2〜2（シェーダーの _SCSize）")
-    shape.add_argument("--arms", choices=LIMB_CHOICES, help="腕の扱い（既定はシェーダーの既定値）")
-    shape.add_argument("--legs", choices=LIMB_CHOICES, help="脚の扱い（既定はシェーダーの既定値）")
+    shape.add_argument("--arms", choices=LIMB_CHOICES, help="腕の扱い（既定はシェーダーの既定値。物品化は fold）")
+    shape.add_argument("--legs", choices=LIMB_CHOICES, help="脚の扱い（既定はシェーダーの既定値。物品化は fold）")
     shape.add_argument("--appendages", choices=APPENDAGE_CHOICES, help="耳と尾の扱い（既定 keep: 形を保つ）")
 
     picture = parser.add_argument_group("絵作り")
@@ -212,8 +220,10 @@ def build_parser() -> argparse.ArgumentParser:
                          help="追加の参照画像（references/ か outputs/ の中。複数指定可）")
     picture.add_argument("--images", default="", metavar="JSON|FILE",
                          help="入力画像の指定。JSON の配列か、それを書いた .json ファイル: "
-                              '[{"role": "base|markup|composition|reference", "path": "…", '
-                              '"provenance": "own_generated|own_work|own_photo", "note": "…"}]')
+                              '[{"role": "base|markup|composition|reference|object", "path": "…", '
+                              '"provenance": "own_generated|own_work|own_photo", "note": "…"}]。'
+                              "役割 object（物品化の変形先の参考）に限り、出所 cc0 / public_domain も使える"
+                              "（source_url と license が必要）")
     picture.add_argument("--no-refs", action="store_true", help="公式画像を参照に添付しない")
 
     run = parser.add_argument_group("実行")
@@ -253,11 +263,12 @@ class Subject:
 
     @property
     def label(self) -> str:
-        return f"{self.character['name_ja']} → Mode {self.spec['mode']:02d} {self.spec['name_ja']}"
+        return f"{self.character['name_ja']} → {shape_label(self.spec)}"
 
     @property
     def slug(self) -> str:
-        return f"mode{self.spec['mode']:02d}_{self.character['slug']}"
+        prefix = "object" if is_object(self.spec) else f"mode{self.spec['mode']:02d}"
+        return f"{prefix}_{self.character['slug']}"
 
 
 @dataclass
@@ -326,10 +337,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             parser.error("--joint は --layout single・変形完了だけに対応しています。")
         if args.state or args.costume:
             parser.error("--joint では、状態を --states でキャラクターごとに指定してください（--costume は単体だけ）。")
+        if args.object:
+            parser.error("--object（物品化）は 1 体だけに対応しています。--joint と一緒には指定できません。")
     elif args.states:
         parser.error("--states は --joint と組み合わせてください（単体は --state）。")
+    elif args.object:
+        if args.mode is not None:
+            parser.error("--object（物品化）と --mode（形状）は、どちらか一方を指定してください。")
+        if args.layout != "single" or args.amount != 1.0 or args.size != 1.0:
+            parser.error("--object（物品化）は --layout single・変形完了だけに対応しています（--amount と --size は使えません）。")
     elif args.mode is None:
-        parser.error("--mode を指定してください（--list-modes で一覧）。")
+        parser.error("--mode か --object を指定してください（形状は --list-modes で一覧）。")
+    if args.face and not args.object:
+        parser.error("--face は --object（物品化）と組み合わせてください。")
     if not 0.0 < args.amount <= 1.0:
         parser.error("--amount は 0 より大きく 1 以下で指定してください。")
     if args.amount < 1.0 and args.layout != "single":
@@ -408,6 +428,8 @@ def build_plan(args: argparse.Namespace, argv: list[str] | None = None, *,
             locate=lambda raw: _locate(raw, output_base, "--images の path"),
             fetch=fetch or _fetch_object, iterate_base=iterate_image,
         )
+        if not args.object and any(image["kind"] == "object" for image in images):
+            raise ValueError("役割 object（変形先の参考）の画像は、--object（物品化）のときだけ使えます。")
         if iterate_image and not any(image["kind"] == "base" for image in images):
             shared.insert(0, _base_reference(iterate_image))    # 役割 base の画像があれば、そちらを起点にする
         shared = input_images.arrange(shared + images, [])
@@ -434,10 +456,14 @@ def build_plan(args: argparse.Namespace, argv: list[str] | None = None, *,
             character = dataset.summarize_character(record, args.form, state=state, costume=args.costume)
             if args.height_cm and not args.joint:
                 character.update(height_cm=args.height_cm, height_note="実行時の指定")
-            spec = build_shape_spec(
-                mode, source, height_cm=character["height_cm"], size=args.size,
-                arms=args.arms, legs=args.legs, appendages=args.appendages,
-            )
+            if args.object:
+                spec = build_object_spec(args.object, face=args.face, arms=args.arms, legs=args.legs,
+                                         appendages=args.appendages, height_cm=character["height_cm"])
+            else:
+                spec = build_shape_spec(
+                    mode, source, height_cm=character["height_cm"], size=args.size,
+                    arms=args.arms, legs=args.legs, appendages=args.appendages,
+                )
             official = [] if args.no_refs else dataset.collect_reference_images(record, character["form"])
             if args.joint:       # 1 体ずつのラフは場面なしで描き、場面と入力画像は合同の清書で使う
                 references = official
@@ -474,6 +500,7 @@ def _subject_meta(subject: Subject) -> dict[str, Any]:
                        "state", "state_note", "costume", "costume_note")},
         "ai_training_gate": subject.gate,
         "shape": {
+            "kind": spec.get("kind", "mode"), "label": shape_label(spec),
             "mode": spec["mode"], "key": spec["key"], "name_ja": spec["name_ja"], "size": spec["size"],
             "limbs": spec["limbs"], "appendages": spec["appendages"], "dimensions": spec["dimensions"],
             "dimensions_cm": spec["dimensions_cm"], "face": spec["face"], "before": spec["before"],
@@ -533,7 +560,7 @@ def execute(
     initialize_run_logs(
         run_dir, prompt_text=first.prompt, meta=meta,
         character="、".join(subject.character["name_ja"] for subject in plan.subjects),
-        shape="、".join(f"Mode {subject.spec['mode']:02d} {subject.spec['name_ja']}" for subject in plan.subjects),
+        shape="、".join(shape_label(subject.spec) for subject in plan.subjects),
         layout=args.layout,
     )
     print(f"[INFO] 実行フォルダー: {run_dir}")
@@ -641,7 +668,8 @@ def execute(
             roughs = [rough_reference(path) for path in best[0][2][:2]]
             references, header = for_stage(first.references, 5), SINGLE_HEADER
             final_prompt = best[0][3](roughs + references)
-            title = f"ShapeChange {first.character['name_ja']} Mode {first.spec['mode']:02d}"
+            title = (f"ShapeChange {first.character['name_ja']} "
+                     + (f"Object {first.spec['name_ja']}" if is_object(first.spec) else f"Mode {first.spec['mode']:02d}"))
         (run_dir / "prompt.txt").write_text(final_prompt, encoding="utf-8")
 
         print(f"[INFO] Stage 5: 完成画像を {args.count} 枚清書します。")
@@ -672,7 +700,7 @@ def _plan_warnings(plan: Plan) -> list[str]:
     warnings: list[str] = []
     for subject in plan.subjects:
         warnings += subject.spec["warnings"]
-        if subject.character["height_cm"] is None:
+        if subject.character["height_cm"] is None and not is_object(subject.spec):
             warnings.append(f"{subject.character['name_ja']} は身長が DB に無いため、寸法は比率だけで指定します。")
         if not subject.references:
             warnings.append(f"{subject.character['name_ja']} は参照画像なしで生成します。")
@@ -701,7 +729,7 @@ def describe_plan(plan: Plan) -> dict[str, Any]:
         "max_generated_images": plan.max_generated_images,
         "warnings": _plan_warnings(plan),
         "subjects": [{"character": subject.character["name_ja"],
-                      "shape": f"Mode {subject.spec['mode']:02d} {subject.spec['name_ja']}",
+                      "shape": shape_label(subject.spec),
                       "state": subject.character["state"] or subject.character["state_note"] or "既定",
                       "costume": subject.character["costume"] or subject.character["costume_note"] or "usual",
                       "selectable_states": subject.character["states"],
@@ -794,7 +822,9 @@ def run(argv: list[str] | None = None, *, ask: Callable[..., dict[str, Any]] | N
             print(f"[INFO] 合同の清書に渡す画像: {ref['role']} — {ref['rel']}")
     for image in plan.images:
         print(f"[INFO] 入力画像: 役割 {image['kind']} / 出所 {image['provenance']}"
-              f"（{input_images.PROVENANCES[image['provenance']]}） / {image['width']}×{image['height']}")
+              f"（{({**input_images.PROVENANCES, **input_images.OBJECT_PROVENANCES})[image['provenance']]}）"
+              f" / {image['width']}×{image['height']}"
+              + (f" / {image['license']} — {image['source_url']}" if image.get("source_url") else ""))
     if args.dry_run:
         print("[INFO] --dry-run のため生成しません。以下が Stage 1 のプロンプトです。\n")
         for subject in plan.subjects:

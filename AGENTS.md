@@ -42,6 +42,7 @@ python -m src.pipeline.shape_pipeline --list-modes
 python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --dry-run
 python -m src.pipeline.shape_pipeline --badge 57 --mode 4            # 5 段階
 python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --quick    # 検査なしで 1 回だけ
+python -m src.pipeline.shape_pipeline --badge 57 --object "シャチ型の浮き輪" --dry-run   # 物品化（家具や道具へ）
 python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --images references/images.json --dry-run   # 入力画像つき
 python -m src.mcp_server                                             # コネクタ（MCP サーバー）
 ```
@@ -51,7 +52,7 @@ python -m src.mcp_server                                             # コネク
 - Stage 2 の画像観察が失敗したときは、利用者が続行を明示した場合だけ先へ進む。無回答は中止として扱う。
 - Canva は、このリポジトリ用の連携（`SHAPECHANGE_CANVA_ACCESS_TOKEN`）だけを使う。GeneratorsAI の `CANVA_*` を流用しない。連携を初めて設定するときと、Canva 仕上げが 401 で省かれたときは、[src/README.md の「Canva の連携」](src/README.md#canva-の連携) の手順でトークンを取得・更新する。
 - キャラクターは manifest の `ai_training.allowed` が true のレコードだけを受け付ける。追加の参照画像（`--ref`）は `references/` か `outputs/` に置いたファイルに限る。
-- 入力画像（`--images`、コネクタの `images`）は、役割（加筆の起点・赤入れ・構図参考・参考画像）と出所を 1 枚ごとに指定する。受け付ける出所は、このパイプラインの生成結果と依頼者自身の作品だけ。チャットに貼られた画像や PC の画像は、渡す前に 1 枚ずつ出所を依頼者に確かめ、推測で出所を付けない。役割ごとの枚数と渡すステージは [src/README.md の「入力画像」](src/README.md#入力画像)。
+- 入力画像（`--images`、コネクタの `images`）は、役割（加筆の起点・赤入れ・構図参考・参考画像）と出所を 1 枚ごとに指定する。受け付ける出所は、このパイプラインの生成結果と依頼者自身の作品だけ（物品化の変形先の参考に限り、CC0・パブリックドメインの画像も、出典の URL とライセンスの表記を添えて渡せる）。チャットに貼られた画像や PC の画像は、渡す前に 1 枚ずつ出所を依頼者に確かめ、推測で出所を付けない。役割ごとの枚数と渡すステージは [src/README.md の「入力画像」](src/README.md#入力画像)。
 - 形状の寸法は実行のたびに `VRCShader_ShapeChange` のシェーダーから読む。サブモジュールの更新後に読み取りが止まった場合は、`src/shape/vrc_source.py` をシェーダーの記述に合わせる。輪郭や顔の位置の記述は `src/shape/mode_descriptions.json` で直す。
 - `VRCShader_ShapeChange/` は公開用のシェーダーパッケージで、モデルや検証用のデータを含まない。VM はこのサブモジュールをそのまま取得する。Cloud Run のイメージには、`python -m src.shape.vm_bundle <空のフォルダー>` が書き出すシェーダーの 2 ファイルだけを入れる。シェーダーの開発用リポジトリ（`VRCShader_ShapeChange-Develop`）の作業コピーにはモデルや検証用のデータがあるので、VM にもイメージにも置かない。
 - `src/` を変更したとき、サブモジュールを更新したときは `tests/` のテストを実行する（生成 API は呼ばない）。

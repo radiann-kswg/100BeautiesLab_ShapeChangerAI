@@ -153,7 +153,8 @@ def _run_entry(run_id: str, meta: dict[str, Any], location: str) -> dict[str, An
     return {
         "run_id": run_id, "status": meta.get("status"), "pipeline": meta.get("pipeline"),
         "created_at": meta.get("created_at"), "retry_of": meta.get("retry_of"),
-        "subjects": [f"{s['character']['name_ja']} → Mode {s['shape']['mode']:02d} {s['shape']['name_ja']}"
+        "subjects": [f"{s['character']['name_ja']} → "
+                     + (s["shape"].get("label") or f"Mode {s['shape']['mode']:02d} {s['shape']['name_ja']}")
                      for s in meta.get("subjects") or []],
         "results": [item["file"] for item in meta.get("results") or []],
         "location": location,

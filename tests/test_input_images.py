@@ -130,7 +130,7 @@ def test_roles_provenance_and_counts_are_checked_before_generation():
     # 出所は毎回必須。第三者の素材は、値として用意していない
     _refused([{"object_key": "base", "role": "base"}], "provenance", files)
     _refused([{"object_key": "base", "role": "base", "provenance": "licensed_third_party"}], "provenance", files)
-    _refused([{"object_key": "base", "role": "object", **own}], "role", files)
+    _refused([{"object_key": "base", "role": "mask", **own}], "role", files)
     _refused([{"object_key": "jpeg", "role": "reference", **own}], "note", files)
     _refused([{"object_key": "base", "path": "x.png", "role": "base", **own}], "どちらか一方", files)
     _refused([{"role": "base", **own}], "どちらか一方", files)

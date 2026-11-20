@@ -67,9 +67,11 @@ Stage 4 では、尾の本数と体数を「設定を知らせない別の呼び
 | `markup` | `base` に赤で指示を描き込んだ画像（赤入れ）。`base` か `--iterate-from` が必要 | 1 | ○ | ○（直ったか、印が残っていないか） | × |
 | `composition` | 構図参考。ポーズ・配置・画角だけを借りる。自動でグレースケールにする | 1 | ○ | × | × |
 | `reference` | 生成画像と関係のない参考。`note`（何の参考にするか）が必須 | 3 | ○ | × | ○ |
+| `object` | 物品化の変形先の参考（下の「物品化」）。`--object` のときだけ | 1 | ○ | ○（物として読めるか） | ○ |
 
 - どの役割の画像よりも、公式画像と設定資料を優先する（プロンプトにそう書く）。`reference` は `note` の用途にだけ使わせる。作風を借りたいときは、画像ではなく `--style` の文で伝える。
 - 出所（`provenance`）は 1 枚ごとに必須: `own_generated`（このパイプラインの生成結果）／`own_work`（依頼者自身の作品）／`own_photo`（依頼者自身が撮った写真）。第三者の作品は受け付けない（[AGENTS.md](../AGENTS.md) の「著作物の扱い」）。
+- 役割 `object` の画像に限り、出所に `cc0`（CC0 の素材）と `public_domain`（パブリックドメインの素材）も使える。`source_url`（出典の URL）と `license`（ライセンスの表記。例 `CC0 1.0`）が必須で、`run_meta.json` に残す。
 - 1 枚 10MB まで、PNG・JPEG・WebP（拡張子ではなく中身で判定する）。赤入れの画像は、加筆の起点と縦横比が 2% 以上違うと受け付けない。
 - 置き場は、CLI では `references/` か `outputs/` の中（`path`）、コネクタでは GCS の自分の接頭辞の下（`object_key`）。base64・Drive のファイル ID・任意の URL は受け付けない。
 - 入力画像は実行フォルダーの `inputs/` に写し（構図参考はグレースケールにしたもの）、役割・出所・SHA-256 を `run_meta.json` の `input_images` に残す。
@@ -89,6 +91,26 @@ python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --dry-run \
   {"role": "composition", "path": "references/my-pose-sketch.png", "provenance": "own_work"},
   {"role": "reference", "path": "references/tile-floor.jpg", "provenance": "own_photo", "note": "床のタイルの質感"}
 ]
+```
+
+## 物品化
+
+`--mode` の代わりに `--object "物の名前"` を渡すと、家具や道具などの物へ変わった姿を描く（コネクタは `object`）。形状番号の変形と違い、寸法を持たない。対応するのは 1 体・1 枚絵（`--layout single`、変形完了）だけで、`--joint`・`--amount`・`--size` とは組み合わせられない。
+
+| 手がかり | 指定 | 既定 |
+| --- | --- | --- |
+| 配色と模様 | 髪・肌・衣装の色と柄を、物の表面へ移す。番号や紋章は、物の表面に描く | 必須（選べない） |
+| 顔 | `--face keep`（物の表面に顔を 1 つ描く）/ `none`（描かない） | `keep` |
+| 腕と脚 | `--arms` / `--legs` の `keep`（物の外へ出す）/ `fold`（物の中へ収め、色だけが表面に見える）/ `hide`（描かない） | `fold` |
+| 耳と尾 | `--appendages` の `keep`（元の形と本数で外へ出す）/ `integrate`（表面の絵柄にする） | `keep` |
+
+- 変形先の参考画像は、入力画像の役割 `object` で渡せる（任意、1 枚）。形・構造・素材感の参考としてだけ使い、画像の中のロゴ・文字・キャラクターの柄・配色は写さないようにプロンプトで指示する。配色と模様は、公式画像のキャラクターから取る。
+- Stage 4 の検査は、名前（と参考画像）のとおりの物として読めるか、人の体の輪郭が残りすぎていないかを `shape_issues` に、配色・模様と顔の扱いの食い違い、参考画像からの写し込みを `violations` に挙げる。尾の本数の照合は `--appendages keep` のときだけ行い、体数は数えない。作り直しの線（`shape_issues` と `violations` の合計が 3 件以上）は形状の変形と同じ。
+- 実行フォルダー名は `…_object_<キャラクター>`、`run_meta.json` の `subjects[].shape` は `kind: "object"` と `label`（`物品化「名前」`）を持つ。
+
+```sh
+python -m src.pipeline.shape_pipeline --badge 57 --object "シャチ型の浮き輪" --dry-run
+python -m src.pipeline.shape_pipeline --badge 57 --object "花瓶" --face none --appendages integrate --dry-run
 ```
 
 ## 使い方
@@ -138,10 +160,11 @@ PowerShell で `python` が Microsoft Store のエイリアスに当たって起
 | `--form` | 変形前の形態（`humanoid` / `corefolder`。形態を持つ作品のみ） |
 | `--state` / `--costume` / `--states` | 変形前の姿の状態と衣装（上の「状態と衣装の指定」）。`--states` は `--joint` の各キャラクターの状態を `;` 区切りで並べる |
 | `--mode` | 形状番号 0〜15 |
+| `--object` / `--face` | 物品化（上の「物品化」）。`--mode` の代わりに変形先の物の名前を渡す。`--face` は顔を残すか（`keep` / `none`） |
 | `--layout` | `single`（1 体）/ `sequence`（変形前→途中→完了）/ `five-view`（五方向図） |
 | `--amount` | 変形量。1 未満で途中の姿（`single` のみ） |
-| `--arms` / `--legs` | `keep` / `fold` / `hide`。形状 0〜8 で選べる |
-| `--appendages` | 耳と尾を `keep`（形を保つ）/ `integrate`（形状へ統合）。形状 0〜8 で選べる |
+| `--arms` / `--legs` | `keep` / `fold` / `hide`。形状 0〜8 と物品化で選べる |
+| `--appendages` | 耳と尾を `keep`（形を保つ）/ `integrate`（形状へ統合）。形状 0〜8 と物品化で選べる |
 | `--size` | 形状全体の大きさ（0.2〜2） |
 | `--scene` / `--style` / `--extra` | 場面・画風・追加の作画指定 |
 | `--ref` | 追加の参照画像。`references/` か `outputs/` の中のファイルに限る |
@@ -220,7 +243,7 @@ Claude Desktop などに登録する例（パスは環境に合わせる）:
 
 | ツール | 内容 |
 | --- | --- |
-| `shapechange_generate_character` / `shapechange_generate_joint` | 単体・合同の生成。ジョブを登録して `job_id` を返す。`images` で入力画像を渡せる |
+| `shapechange_generate_character` / `shapechange_generate_joint` | 単体・合同の生成。ジョブを登録して `job_id` を返す。`images` で入力画像を渡せる。単体は、`mode` の代わりに `object`（と `face`）を渡すと物品化になる |
 | `shapechange_generate_from_natural` | 自然文の依頼から生成。読み取り結果は結果の `interpretation` に入る。入力画像は渡せない |
 | `shapechange_iterate` | 以前の実行と同じ指定で、その完成画像を起点に改稿する。変える点は `revisions` か赤入れの画像（`images` の `markup`）で伝える。`quick` は起点の画像の編集 1 回だけ |
 | `shapechange_create_upload_slot` | 入力画像 1 枚の受け取り口。署名付き PUT URL（15 分有効）と `object_key` を返す |
@@ -271,6 +294,7 @@ python -m src.shape.vm_bundle outputs/vm-shape-data
 | `pipeline/final_generator.py` | Stage 5: 清書と Canva 仕上げ |
 | `pipeline/natural_parser.py` | 自然文の依頼の読み取り |
 | `shape/vrc_source.py` / `shape/modes.py` | シェーダーからの寸法の読み取り、形状仕様と体格の計算 |
+| `shape/objects.py` | 物品化の仕様（顔・腕と脚・耳と尾の扱い。寸法は持たない） |
 | `shape/vm_bundle.py` | Cloud Run のイメージへ渡すシェーダー 2 ファイルの書き出し |
 | `utils/dataset.py` | manifest の読み込み、AI 利用ゲート、キャラクター検索、参照画像の選定 |
 | `gemini/generate.py` / `openai/generate.py` / `openai/vision.py` / `canva/generate.py` | 外部 API の呼び出し |

@@ -32,7 +32,7 @@ from typing import Any, Literal, Optional
 
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..pipeline.shape_pipeline import _load_env
 from . import output_sink, tools
@@ -68,8 +68,8 @@ mcp = FastMCP(
 Limb = Literal["keep", "fold", "hide"]
 Appendages = Literal["keep", "integrate"]
 Provider = Literal["gemini", "openai"]
-ImageRole = Literal["base", "markup", "composition", "reference"]
-Provenance = Literal["own_generated", "own_work", "own_photo"]
+ImageRole = Literal["base", "markup", "composition", "reference", "object"]
+Provenance = Literal["own_generated", "own_work", "own_photo", "cc0", "public_domain"]
 _DRY_RUN = "true にすると生成せず、プロンプトと役割の付いた画像の一覧を返す（画像の生成は呼ばない）。生成の前に必ず確かめる"
 _WRITE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True}
 _READ = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
@@ -84,11 +84,15 @@ class InputImage(_Base):
                             description="shapechange_create_upload_slot で上げた画像、または shapechange_list_gcs_logs の object_key")
     role: ImageRole = Field(..., description="base: 加筆の起点（1 枚）/ markup: base に赤で指示を描き込んだ画像（1 枚。base か起点の実行が必要）"
                                              "/ composition: 構図参考（1 枚。ポーズ・配置・画角だけを借りる。色は自動で抜く）"
-                                             "/ reference: 生成画像と関係のない参考（3 枚まで。note が必須）")
+                                             "/ reference: 生成画像と関係のない参考（3 枚まで。note が必須）"
+                                             "/ object: 物品化の変形先の参考（1 枚。object を指定した生成だけ。形・構造・素材感だけを借りる）")
     note: str = Field("", max_length=200, description="何の参考にするか。role が reference のときは必須")
     provenance: Provenance = Field(..., description="画像の出所。own_generated: このパイプラインの生成結果 / own_work: 利用者自身の作品"
                                                     " / own_photo: 利用者自身が撮った写真。利用者に確かめた値を入れる（推測しない）。"
-                                                    "第三者の作品は渡せない")
+                                                    "第三者の作品は渡せない。role が object の画像に限り、cc0 / public_domain も使える"
+                                                    "（source_url と license が必須）")
+    source_url: str = Field("", max_length=500, description="provenance が cc0 / public_domain のときの、出典の URL")
+    license: str = Field("", max_length=200, description="provenance が cc0 / public_domain のときの、ライセンスの表記（例: CC0 1.0）")
 
 
 def _images_field() -> Any:
@@ -113,7 +117,11 @@ class GenerateCharacterInput(_Common):
     badge: Optional[str] = Field(None, description="バッジ（例: 57, 2B, EZ1, ENE）。作品コード付き（NTS-57, SAR-EZ1）なら work は不要。"
                                                    "番号と作品内の識別子（2-alt, Mouse）も使える")
     name: Optional[str] = Field(None, description="名前の一部（badge の代わりに指定）")
-    mode: int = Field(..., ge=0, le=15, description="形状番号（shapechange_list_modes で一覧）")
+    mode: Optional[int] = Field(None, ge=0, le=15, description="形状番号（shapechange_list_modes で一覧）。object とどちらか一方を指定する")
+    object: str = Field("", max_length=60, description="物品化: mode の代わりに、変形先の物の名前を指定する（例: シャチ型の浮き輪、ソファ、花瓶）。"
+                                                       "寸法を持たない変形で、layout は single、amount と size は既定のまま。"
+                                                       "変形先の参考画像は images の role: object で渡せる")
+    face: Optional[Literal["keep", "none"]] = Field(None, description="物品化で顔を残すか（既定 keep: 物の表面に顔を描く / none: 描かない）。object のときだけ")
     form: Optional[Literal["humanoid", "corefolder"]] = Field(None, description="変形前の形態")
     state: str = Field("", max_length=200, description="変形前の姿の状態。shapechange_list_characters の states にある名前"
                                                        "（afterChanged, beasted など）か、体型と着用物だけを変える自由な文。省くと既定の状態")
@@ -126,6 +134,12 @@ class GenerateCharacterInput(_Common):
     legs: Optional[Limb] = None
     appendages: Optional[Appendages] = None
     quick: bool = Field(False, description="検査なしで 1 回だけ生成する")
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "GenerateCharacterInput":
+        if (self.mode is None) == (not self.object):
+            raise ValueError("mode（形状番号）か object（物品化の変形先の名前）の、どちらか一方を指定してください。")
+        return self
 
 
 class JointSubject(_Base):
@@ -209,7 +223,7 @@ async def _generate(kind: str, argv: list[str], dry_run: bool) -> str:
 
 @mcp.tool(name="shapechange_generate_character", annotations={"title": "形状変化イラストを生成（単体）", **_WRITE})
 async def shapechange_generate_character(params: GenerateCharacterInput) -> str:
-    """キャラクター 1 体が指定の形状へ変化した姿を生成する。課金を伴う。ジョブを登録して job_id を返す。
+    """キャラクター 1 体が指定の形状（mode）か物（object。物品化）へ変化した姿を生成する。課金を伴う。ジョブを登録して job_id を返す。
     先に dry_run: true で内容を確かめ、利用者の承認を得てから呼ぶ。images で入力画像を渡せる。"""
     data = params.model_dump()
     dry_run = data.pop("dry_run")

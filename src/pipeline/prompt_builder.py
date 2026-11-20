@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..shape import objects
 from ..shape.modes import appendage_text, limb_text
 
 LAYOUTS = ("single", "sequence", "five-view")
@@ -97,7 +98,22 @@ def state_lines(character: dict[str, Any]) -> list[str]:
     return ["[状態と衣装の指定（変形前の姿）]", *lines]
 
 
-def _keep_block(character: dict[str, Any]) -> list[str]:
+def _keep_block(character: dict[str, Any], spec: dict[str, Any] | None = None) -> list[str]:
+    if spec and objects.is_object(spec):
+        lines = [
+            "[物になっても維持する特徴（必須）]",
+            "- 髪・肌・衣装の色と柄を、物の表面の配色と模様として残す。色相を変えない。",
+            "- 番号・紋章などの識別記号を、物の表面に読める形で残す。",
+        ]
+        if spec["face"]["mode"] == "keep":
+            lines.append("- 顔立ちと瞳の色を変えない。")
+        lines += [
+            "- 耳の種類、尾の種類と本数を変えず、数えられる形で残す。",
+            "Carry the hair, skin and outfit colours and patterns over to the object's surface without shifting"
+            " their hues, and keep any number markings or emblems readable on it. Keep the ear type, tail type and"
+            " exact tail count countable.",
+        ]
+        return lines + [f"- {item}" for item in character["immutable_constraints"]]
     lines = [
         "[変形後も維持する特徴（必須）]",
         "- 髪の色と髪型の特徴、瞳の色、顔立ち、衣装の色と柄を変えない。",
@@ -106,6 +122,31 @@ def _keep_block(character: dict[str, Any]) -> list[str]:
         " tail type and exact tail count, and any number markings or emblems unchanged and readable.",
     ]
     lines += [f"- {item}" for item in character["immutable_constraints"]]
+    return lines
+
+
+def _object_block(spec: dict[str, Any], references: list[dict[str, Any]] | None) -> list[str]:
+    """物品化の変形先。寸法は持たず、その物として読めることと、表面へ移す手がかりを指定する。"""
+    name = spec["name_ja"]
+    lines = [
+        f"[変形後の姿: 物品化「{name}」]",
+        f"- 物: {name}。その物として一目で読める輪郭・構造・素材感で描く。人の体の輪郭（頭・胴・肩・腰の形）は残さない。",
+        f"  The character has become the object \"{name}\": it must read at a glance as that object in outline,"
+        " structure and material, with no human body outline left.",
+        "- 配色と模様: 髪・肌・衣装の色と柄を、物の表面の配色と模様に移す。番号や紋章は、物の表面に描く。",
+        "  Carry the hair, skin and outfit colours and patterns over to the object's surface; paint any number"
+        " markings or emblems on it.",
+        f"- 顔: {objects.face_text(spec)[0]}",
+        f"  {objects.face_text(spec)[1]}",
+    ]
+    for limb, label in (("arms", "腕"), ("legs", "脚")):
+        text = objects.limb_text(spec, limb)
+        lines += [f"- {label}: {text[0]}", f"  {'Arms' if limb == 'arms' else 'Legs'}: {text[1]}"]
+    appendage = objects.appendage_text(spec)
+    lines += [f"- 耳と尾: {appendage[0]}", f"  {appendage[1]}"]
+    lines.append("- 大きさ: 寸法の指定は無い。その物として自然な大きさと比率で描く。")
+    if any(ref.get("kind") == "object" for ref in references or []):
+        lines.append("- 形・構造・素材感は、添付した「変形先の参考」の画像に合わせる（使い方は [参照画像の扱い]）。")
     return lines
 
 
@@ -179,6 +220,13 @@ def _physique_block(character: dict[str, Any], spec: dict[str, Any]) -> list[str
 
 def _layout_block(spec: dict[str, Any], layout: str, amount: float) -> list[str]:
     lines = ["[構図]"]
+    if objects.is_object(spec):
+        return lines + [
+            "- 物になった 1 体を、斜め前のやや上から全体が収まるように描く。立体の奥行きと構造が読み取れる角度にする。",
+            "- 床に淡い接地影を付け、物が床に置かれていることを示す。",
+            "A single object seen from a three-quarter front view, slightly from above, so its depth and"
+            " structure read clearly; a soft contact shadow on the floor.",
+        ]
     if layout == "sequence":
         lines += [
             "- 横長の 1 枚に、左から「変形前」「途中（変形量 約 50%）」「変形完了」の 3 体を、同じ縮尺・同じ床の線で並べる。",
@@ -234,7 +282,7 @@ def _reference_block(references: list[dict[str, Any]] | None, has_revisions: boo
     first = {}
     for number, ref in enumerate(references, start=1):
         first.setdefault(ref.get("kind"), number)
-    if first.keys() & {"base", "markup", "composition", "reference"}:
+    if first.keys() & {"base", "markup", "composition", "reference", "object"}:
         lines.append("- キャラクターの外見は公式の参照画像と設定資料が正しい。依頼者が渡したほかの画像と食い違うときは、"
                      "公式の参照画像と設定資料を採る。")
     if "base" in first:
@@ -262,6 +310,14 @@ def _reference_block(references: list[dict[str, Any]] | None, has_revisions: boo
             f"Reference {first['composition']} is a greyscale composition guide: borrow only the pose, placement and"
             " camera angle; take no colours, style, outfit or character design from it.",
         ]
+    if "object" in first:
+        lines += [
+            f"- 参照{first['object']}（変形先の参考）は、変形先の物の形・構造・素材感の参考としてだけ使う。"
+            "画像の中のロゴ・文字・キャラクターの柄・配色は写さない。配色と模様は、公式の参照画像のキャラクターから取る。",
+            f"Reference {first['object']} shows the target object: use it only for the object's shape, structure and"
+            " material. Copy no logos, text, character prints or colours from it; take the colours and patterns"
+            " from the official character references.",
+        ]
     for number, ref in enumerate(references, start=1):
         if ref.get("kind") == "reference":
             lines.append(f"- 参照{number}（参考画像）は「{ref['note']}」のためだけに使う。"
@@ -270,7 +326,7 @@ def _reference_block(references: list[dict[str, Any]] | None, has_revisions: boo
 
 
 def _closing_blocks(references: list[dict[str, Any]] | None, scene: str, style: str, extra: str,
-                    revisions: list[str] | None, avoid: list[str]) -> list[list[str]]:
+                    revisions: list[str] | None, avoid: list[str], is_object: bool = False) -> list[list[str]]:
     blocks: list[list[str]] = []
     if scene:
         blocks.append(["[場面]", f"- {scene}"])
@@ -280,9 +336,15 @@ def _closing_blocks(references: list[dict[str, Any]] | None, scene: str, style: 
         blocks.append(["[前回からの変更点]"] + [f"- {item}" for item in revisions])
     rules = [
         "[表現の約束]",
-        "- 全年齢向け。形状変化は玩具やクッションのようにコミカルで柔らかく描き、表情は穏やかか楽しげにする。",
-        "- 痛み・損傷・流血・破れた衣装の表現は入れない。衣装は着たまま形状の面に沿わせる。",
-        "- 形状の表面は元の肌・髪・衣装の色と質感で構成し、無関係な材質や模様を足さない。",
+        *([
+            "- 全年齢向け。物品化は玩具や雑貨のようにコミカルで柔らかく描き、顔を描く場合の表情は穏やかか楽しげにする。",
+            "- 痛み・損傷・流血・破れた衣装の表現は入れない。衣装は、色と柄として物の表面に移す。",
+            "- 素材感はその物らしく描き（ビニール、布、陶器、木など）、配色と模様は元の髪・肌・衣装から取る。無関係な色や模様を足さない。",
+        ] if is_object else [
+            "- 全年齢向け。形状変化は玩具やクッションのようにコミカルで柔らかく描き、表情は穏やかか楽しげにする。",
+            "- 痛み・損傷・流血・破れた衣装の表現は入れない。衣装は着たまま形状の面に沿わせる。",
+            "- 形状の表面は元の肌・髪・衣装の色と質感で構成し、無関係な材質や模様を足さない。",
+        ]),
         f"- 画風: {style or ('参照画像の線と塗りに合わせる。' if references else '線のはっきりしたシンプルなアニメ調。')}",
         f"- 背景: {'場面の指定に従う。' if scene else '白の無地。'}",
         "- 画像内に説明文・ラベル・署名・透かしを入れない。",
@@ -314,7 +376,20 @@ def build_prompt(
     if layout not in LAYOUTS:
         raise ValueError(f"layout は {LAYOUTS} のいずれか: {layout}")
     subject = f"{character['name_ja']}（{character['work_title_ja']}）" if character.get("work_title_ja") else character["name_ja"]
-    blocks: list[list[str]] = [[
+    if objects.is_object(spec):
+        blocks: list[list[str]] = [[
+            "[依頼]",
+            f"{subject} が「{spec['name_ja']}」という物になった姿（物品化）を、同じキャラクターだと分かるように描いてください。",
+            f"Draw the character turned into the object \"{spec['name_en']}\", still clearly recognisable as the same"
+            " character through its colours, patterns and markings.",
+        ]]
+        blocks += _reference_block(references, bool(revisions))
+        blocks += [_character_block(character), state_lines(character), _keep_block(character, spec),
+                   _object_block(spec, references), _layout_block(spec, layout, amount)]
+        blocks += _closing_blocks(references, scene, style, extra, revisions,
+                                  _unique(character["negative_keywords"]), is_object=True)
+        return _join(blocks)
+    blocks = [[
         "[依頼]",
         f"{subject} が「{spec['name_ja']}」へ形状変化した姿を、同じキャラクターだと分かるように描いてください。",
         f"Draw the character transformed into the shape \"{spec['name_en']}\" while staying clearly recognisable"

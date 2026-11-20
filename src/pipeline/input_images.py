@@ -8,9 +8,11 @@
 | ``markup`` | ``base`` に描き込んだ赤入れ（``base`` が必須） | 1 | ○ | ○ | × |
 | ``composition`` | 構図参考。グレースケールにして渡す | 1 | ○ | × | × |
 | ``reference`` | 生成画像と関係のない参考。``note``（用途）が必須 | 3 | ○ | × | ○ |
+| ``object`` | 物品化の変形先の参考（``--object`` のときだけ） | 1 | ○ | ○ | ○ |
 
 受け付ける出所（``provenance``）は、このパイプラインの生成結果と依頼者自身の作品だけ
-（AGENTS.md「著作物の扱い」）。置き場は、CLI では references/ か outputs/（``path``）、
+（AGENTS.md「著作物の扱い」）。役割 ``object`` の画像に限り、CC0 とパブリックドメインの素材も受け付け、
+出典の URL（``source_url``）とライセンスの表記（``license``）を記録する。置き場は、CLI では references/ か outputs/（``path``）、
 コネクタでは GCS の自分の接頭辞の下（``object_key``）に限る。
 """
 
@@ -29,10 +31,17 @@ MAX_NOTE = 200
 ASPECT_TOLERANCE = 0.02
 ALL_STAGES = (3, 4, 5)
 SUFFIXES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+MAX_LICENSE = 200
+MAX_URL = 500
 PROVENANCES = {
     "own_generated": "このパイプラインの生成結果",
     "own_work": "依頼者自身の作品",
     "own_photo": "依頼者自身が撮った写真",
+}
+#: 役割 object（物品化の変形先の参考）の画像に限って受け付ける出所。出典の URL とライセンスの表記が要る。
+OBJECT_PROVENANCES = {
+    "cc0": "CC0 の素材",
+    "public_domain": "パブリックドメインの素材",
 }
 #: 役割 → (プロンプトでの呼び名, 枚数の上限, 渡すステージ)。並びは参照に添付する順。
 ROLES: dict[str, tuple[str, int, tuple[int, ...]]] = {
@@ -40,6 +49,7 @@ ROLES: dict[str, tuple[str, int, tuple[int, ...]]] = {
     "markup": ("赤入れ（加筆の起点への指示書き）", 1, (3, 4)),
     "composition": ("構図参考（グレースケール）", 1, (3,)),
     "reference": ("参考画像", 3, (3, 5)),
+    "object": ("変形先の参考（物の形と素材感）", 1, (3, 4, 5)),
 }
 #: 公式画像より前に添付する役割（残りは公式画像の後ろ）。
 LEADING = ("base", "markup", "composition")
@@ -123,9 +133,21 @@ def resolve(
         note = " ".join(str(item.get("note") or "").split())
         if role not in ROLES:
             raise ValueError(f"{where}: role は {' / '.join(ROLES)} のいずれかを指定してください: {role or '(未指定)'}")
-        if provenance not in PROVENANCES:
+        license_note = " ".join(str(item.get("license") or "").split())
+        source_url = str(item.get("source_url") or "").strip()
+        if provenance in OBJECT_PROVENANCES and role == "object":
+            if not source_url.startswith(("https://", "http://")) or len(source_url) > MAX_URL or not license_note:
+                raise ValueError(f"{where}: 出所 {provenance} の画像には、source_url（出典の URL）と license"
+                                 "（ライセンスの表記。例: CC0 1.0）が必要です。")
+            if len(license_note) > MAX_LICENSE:
+                raise ValueError(f"{where}: license は {MAX_LICENSE} 文字までです。")
+        elif provenance not in PROVENANCES:
+            extra = (f"\n  {' / '.join(OBJECT_PROVENANCES)} は、役割 object（物品化の変形先の参考）の画像だけに使えます。"
+                     if provenance in OBJECT_PROVENANCES else "")
             raise ValueError(f"{where}: provenance（出所）は毎回必要です。{' / '.join(PROVENANCES)} のいずれか: "
-                             f"{provenance or '(未指定)'}\n  受け付けるのは、このパイプラインの生成結果と依頼者自身の作品だけです。")
+                             f"{provenance or '(未指定)'}\n  受け付けるのは、このパイプラインの生成結果と依頼者自身の作品だけです。" + extra)
+        else:
+            license_note = source_url = ""         # 自分の作品と生成結果には、出典の記録は要らない
         if role == "reference" and not note:
             raise ValueError(f"{where}: 役割 reference には note（何の参考にするか）が必要です。")
         if len(note) > MAX_NOTE:
@@ -156,6 +178,7 @@ def resolve(
             "path": None, "rel": next(iter(source.values())), "official": False,
             "role": f"{label}（用途: {note}）" if role == "reference" else label,
             "kind": role, "stages": stages, "note": note, "provenance": provenance, "source": source,
+            "license": license_note, "source_url": source_url,
             "data": data, "mime": detected[1], "width": width, "height": height,
             "sha256": hashlib.sha256(data).hexdigest(),
         })
@@ -184,8 +207,11 @@ def resolve(
 
 def describe(image: dict[str, Any]) -> dict[str, Any]:
     """記録と事前確認に出す、入力画像 1 枚ぶんの要約（中身は含めない）。"""
+    credit = ({"license": image["license"], "source_url": image["source_url"]}
+              if image.get("source_url") else {})
     return {
         "role": image["kind"], "note": image["note"], "provenance": image["provenance"], "source": image["source"],
+        **credit,
         "bytes": len(image["data"]), "width": image["width"], "height": image["height"], "sha256": image["sha256"],
         "stages": list(image["stages"]), "grayscale": image["kind"] == "composition",
     }
