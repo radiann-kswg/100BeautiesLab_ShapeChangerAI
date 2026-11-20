@@ -4,7 +4,8 @@
 - shapechange_generate_character     単体キャラクターの生成（5 段階、または quick）
 - shapechange_generate_joint         複数キャラクターを 1 枚に（キャラクターごとに形状を指定）
 - shapechange_generate_from_natural  自然文の依頼から生成
-- shapechange_iterate                以前の実行を起点にした改稿
+- shapechange_iterate                以前の実行を起点にした改稿（赤入れ画像、軽い加筆の quick）
+- shapechange_create_upload_slot     入力画像（加筆の起点・赤入れ・構図参考・参考画像）の受け取り口
 - shapechange_job_status             ジョブの進捗と完成画像のリンク
 - shapechange_answer_reference_warning  Stage 2 の観察失敗に対する続行／中止の回答
 - shapechange_list_runs / shapechange_get_run_logs  実行の一覧と記録
@@ -12,7 +13,8 @@
 - shapechange_refresh_canva_token    Canva のアクセストークンの更新
 - shapechange_list_modes / shapechange_list_characters  指定できる形状とキャラクター
 
-生成は数分かかるため、生成系のツールはジョブを登録してすぐ job_id を返す。
+生成は数分かかるため、生成系のツールはジョブを登録してすぐ job_id を返す。生成系のツールに
+``dry_run`` を付けると、ジョブを登録せず、プロンプトと役割の付いた画像の一覧をその場で返す。
 
 起動:
     python -m src.mcp_server                                    # ローカル (stdio)
@@ -66,6 +68,9 @@ mcp = FastMCP(
 Limb = Literal["keep", "fold", "hide"]
 Appendages = Literal["keep", "integrate"]
 Provider = Literal["gemini", "openai"]
+ImageRole = Literal["base", "markup", "composition", "reference"]
+Provenance = Literal["own_generated", "own_work", "own_photo"]
+_DRY_RUN = "true にすると生成せず、プロンプトと役割の付いた画像の一覧を返す（画像の生成は呼ばない）。生成の前に必ず確かめる"
 _WRITE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True}
 _READ = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 
@@ -74,7 +79,26 @@ class _Base(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
+class InputImage(_Base):
+    object_key: str = Field(..., min_length=1, max_length=1024,
+                            description="shapechange_create_upload_slot で上げた画像、または shapechange_list_gcs_logs の object_key")
+    role: ImageRole = Field(..., description="base: 加筆の起点（1 枚）/ markup: base に赤で指示を描き込んだ画像（1 枚。base か起点の実行が必要）"
+                                             "/ composition: 構図参考（1 枚。ポーズ・配置・画角だけを借りる。色は自動で抜く）"
+                                             "/ reference: 生成画像と関係のない参考（3 枚まで。note が必須）")
+    note: str = Field("", max_length=200, description="何の参考にするか。role が reference のときは必須")
+    provenance: Provenance = Field(..., description="画像の出所。own_generated: このパイプラインの生成結果 / own_work: 利用者自身の作品"
+                                                    " / own_photo: 利用者自身が撮った写真。利用者に確かめた値を入れる（推測しない）。"
+                                                    "第三者の作品は渡せない")
+
+
+def _images_field() -> Any:
+    return Field(default_factory=list, max_length=6,
+                 description="入力画像。キャラクターの外見は公式画像と設定資料が優先される")
+
+
 class _Common(_Base):
+    images: list[InputImage] = _images_field()
+    dry_run: bool = Field(False, description=_DRY_RUN)
     scene: str = Field("", max_length=600, description="場面・背景の指定")
     style: str = Field("", max_length=300, description="画風の指定（既定は公式画像に合わせる）")
     extra: str = Field("", max_length=600, description="追加の作画指定")
@@ -117,13 +141,22 @@ class GenerateFromNaturalInput(_Base):
     work: Optional[str] = None
     provider: Provider = "gemini"
     skip_canva: bool = False
+    dry_run: bool = Field(False, description="true にすると画像を生成せず、依頼文の読み取り結果とプロンプトを返す"
+                                             "（依頼文の読み取りには OpenAI の API を使う）")
 
 
 class IterateInput(_Base):
     run_id: str = Field(..., description="起点にする実行（shapechange_list_runs の run_id）")
-    revisions: list[str] = Field(..., min_length=1, description="前回から変える点")
+    revisions: list[str] = Field(default_factory=list, description="前回から変える点。赤入れ画像（role: markup）だけで指示する場合は省ける")
+    images: list[InputImage] = _images_field()
+    quick: bool = Field(False, description="true にすると、起点の画像の編集 1 回だけで仕上げる（観察・検査・Canva を省き、完成画像は 1 枚）")
+    dry_run: bool = Field(False, description=_DRY_RUN)
     count: Optional[int] = Field(None, ge=1, le=4)
     skip_canva: bool = False
+
+
+class UploadSlotInput(_Base):
+    content_type: Literal["image/png", "image/jpeg", "image/webp"] = Field(..., description="上げる画像の形式")
 
 
 class JobInput(_Base):
@@ -162,35 +195,62 @@ def _json(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
 
+async def _generate(kind: str, argv: list[str], dry_run: bool) -> str:
+    """``dry_run`` なら計画だけを返し、そうでなければジョブを登録する。"""
+    if dry_run:
+        return _json(await asyncio.to_thread(tools.dry_run, argv))
+    return _json(tools.submit(kind, argv))
+
+
 @mcp.tool(name="shapechange_generate_character", annotations={"title": "形状変化イラストを生成（単体）", **_WRITE})
 async def shapechange_generate_character(params: GenerateCharacterInput) -> str:
-    """キャラクター 1 体が指定の形状へ変化した姿を生成する。課金を伴う。ジョブを登録して job_id を返す。"""
-    return _json(tools.submit("generate_character", tools.build_argv(params.model_dump())))
+    """キャラクター 1 体が指定の形状へ変化した姿を生成する。課金を伴う。ジョブを登録して job_id を返す。
+    先に dry_run: true で内容を確かめ、利用者の承認を得てから呼ぶ。images で入力画像を渡せる。"""
+    data = params.model_dump()
+    dry_run = data.pop("dry_run")
+    return await _generate("generate_character", tools.build_argv(data), dry_run)
 
 
 @mcp.tool(name="shapechange_generate_joint", annotations={"title": "形状変化イラストを生成（合同）", **_WRITE})
 async def shapechange_generate_joint(params: GenerateJointInput) -> str:
-    """2〜4 体を 1 枚に描く。キャラクターごとに別の形状を指定できる。課金を伴う。"""
-    return _json(tools.submit("generate_joint", tools.build_argv(params.model_dump())))
+    """2〜4 体を 1 枚に描く。キャラクターごとに別の形状を指定できる。課金を伴う。
+    images の入力画像は、全員を描く清書でだけ使う（赤入れが反映されたかの検査は行わない）。"""
+    data = params.model_dump()
+    dry_run = data.pop("dry_run")
+    return await _generate("generate_joint", tools.build_argv(data), dry_run)
 
 
 @mcp.tool(name="shapechange_generate_from_natural", annotations={"title": "自然文から形状変化イラストを生成", **_WRITE})
 async def shapechange_generate_from_natural(params: GenerateFromNaturalInput) -> str:
     """自然文の依頼からキャラクターと形状を読み取って生成する。複数に読める形状語は代表の形状に決め、
-    読み取り結果は job_status の result.interpretation に入る。課金を伴う。"""
+    読み取り結果は job_status の result.interpretation に入る。課金を伴う。入力画像は渡せない。"""
     data = params.model_dump()
-    return _json(tools.submit("generate_from_natural", ["--natural", data.pop("request")] + tools.build_argv(data)))
+    dry_run = data.pop("dry_run")
+    return await _generate("generate_from_natural", ["--natural", data.pop("request")] + tools.build_argv(data), dry_run)
 
 
 @mcp.tool(name="shapechange_iterate", annotations={"title": "以前の生成結果を改稿", **_WRITE})
 async def shapechange_iterate(params: IterateInput) -> str:
-    """以前の実行と同じ指定で、その完成画像を起点に Stage 3〜5 をやり直す。課金を伴う。"""
+    """以前の実行と同じ指定で、その完成画像を起点に Stage 3〜5 をやり直す。課金を伴う。
+    変える点は revisions の文か、起点の画像に赤で描き込んだ画像（images の role: markup）で伝える。両方あれば両方使う。
+    quick: true は起点の画像の編集 1 回だけ。サーバーが止まったあとの実行も、GCS に残っていれば起点にできる。"""
+    if not params.revisions and not any(image.role == "markup" for image in params.images):
+        return _json({"status": "error", "message": "revisions（変える点）か、赤入れ画像（images の role: markup）のどちらかを指定してください。"})
+    overrides = {"images": [image.model_dump() for image in params.images], "quick": params.quick,
+                 "count": params.count or (1 if params.quick else None), "skip_canva": params.skip_canva}
     try:
-        argv = tools.iterate_argv(params.run_id, params.revisions,
-                                  {"count": params.count, "skip_canva": params.skip_canva})
+        argv = await asyncio.to_thread(tools.iterate_argv, params.run_id, params.revisions, overrides)
     except ValueError as err:
         return _json({"status": "error", "message": str(err)})
-    return _json(tools.submit("iterate", argv))
+    return await _generate("iterate", argv, params.dry_run)
+
+
+@mcp.tool(name="shapechange_create_upload_slot", annotations={"title": "入力画像の受け取り口を作る", **_WRITE})
+async def shapechange_create_upload_slot(params: UploadSlotInput) -> str:
+    """入力画像 1 枚ぶんの署名付き PUT URL（15 分有効）と object_key を返す。1 枚 10MB まで、PNG・JPEG・WebP。
+    返ってきた upload_command のとおりに画像を上げ、object_key を生成ツールの images に渡す。
+    上げてよいのは、このパイプラインの生成結果と利用者自身の作品だけ。出所は 1 枚ずつ利用者に確かめる。"""
+    return _json(await asyncio.to_thread(tools.create_upload_slot, params.content_type))
 
 
 @mcp.tool(name="shapechange_job_status", annotations={"title": "ジョブの進捗", **_READ})

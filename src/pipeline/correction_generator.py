@@ -15,6 +15,10 @@
 数えさせ、設定との照合はコードで行う。設定の本数を先に見せると、Vision はその数に合わせて
 答えてしまう（2026-11-18 の実行で、尾が 5〜6 本の絵にも「8 本」と答えた）。数え方には
 1〜2 本の誤差があるので、指摘は「全部の先端が見えるように描く」という修正の依頼にとどまる。
+
+依頼者の入力画像のうち、検査と修正に渡すのは赤入れ（``markup``）だけ。赤入れがあれば、印の場所が
+直っているか、印や指示の文字がラフに残っていないかも検査する。プロンプトは、その呼び出しで添付する
+参照の並びに合わせて ``compose`` で組み直す（参照の番号と役割をずらさないため）。
 """
 
 from __future__ import annotations
@@ -26,8 +30,11 @@ from typing import Any, Callable
 from ..shape.modes import appendage_text, limb_text
 from ..utils.provider import GenerationResult, ProviderError
 from .design_reference import Vision, observation_block
+from .input_images import for_stage
 
 Generator = Callable[..., GenerationResult]
+#: 添付する参照の並びから、作画指定のプロンプトを組む関数。
+Compose = Callable[[list[dict[str, Any]]], str]
 
 SEVERE_THRESHOLD = 3
 _ISSUE_KEYS = ("shape_issues", "violations", "missing", "composition_issues")
@@ -39,7 +46,7 @@ _LAYOUT_NOTE = {
 
 
 def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: str, amount: float,
-                       design: dict[str, Any], has_official: bool) -> str:
+                       design: dict[str, Any], has_official: bool, has_markup: bool = False) -> str:
     dims = spec["dimensions"]
     size = (
         f"幅 {dims['width']:g} × 高さ {dims['height']:g} × 奥行き {dims['depth']:g}"
@@ -82,7 +89,10 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
         "- composition_issues: 見切れ、体数の誤り、破綻した描写を入れる。\n"
         "- 指定どおりの変形（顔の拡大、衣装が面に沿う、手足の収納）は問題にしない。"
         "陰影による濃淡、ポーズや角度の違いも問題にしない。"
-        + ("\n- 2 枚目以降は公式画像。キャラクターの外見はこれと照合する。" if has_official else ""),
+        + ("\n- 2 枚目以降は公式画像。キャラクターの外見はこれと照合する。" if has_official else "")
+        + ("\n- 最後の 1 枚（赤入れ）は公式画像ではなく、加筆の起点の絵に赤い印で修正の指示を描き込んだもの。"
+           "印が指す場所が指示のとおりに直っていなければ「赤入れ未反映: 〜」、赤い印や指示の文字がラフに"
+           "残っていれば「赤入れの印: 〜」として composition_issues に入れる。" if has_markup else ""),
         "次の JSON だけを返してください（各配列は日本語の短い文。問題が無ければ空配列）:\n"
         '{"shape_issues": [], "violations": [], "missing": [], "composition_issues": []}',
     ]
@@ -119,9 +129,11 @@ def _measured_issues(measured: dict[str, Any], character: dict[str, Any], result
 
 
 def inspect_rough(image: Path, prompt: str, official: list[dict[str, Any]], vision: Vision,
-                  character: dict[str, Any], layout: str) -> dict[str, Any]:
+                  character: dict[str, Any], layout: str, markup: dict[str, Any] | None = None) -> dict[str, Any]:
     """1 枚を検査する。Vision が失敗したら ``skipped`` を立てて返す。"""
     images = [("検査対象のラフ", image)] + [(f"公式画像: {ref['role']}", ref["path"]) for ref in official[:2]]
+    if markup:
+        images.append(("赤入れ（加筆の起点への指示書き。公式画像ではない）", markup["path"]))
     try:
         raw = vision(prompt, images)
     except ProviderError as err:
@@ -147,7 +159,7 @@ def _issue_lines(analysis: dict[str, Any]) -> tuple[list[str], list[str]]:
 def correct_roughs(
     roughs: list[Path],
     *,
-    prompt: str,
+    compose: Compose,
     character: dict[str, Any],
     spec: dict[str, Any],
     layout: str,
@@ -159,10 +171,15 @@ def correct_roughs(
     generator: Generator,
     vision: Vision,
 ) -> dict[str, Any]:
-    """``{"passed", "corrected", "all", "log"}`` を返す。``all`` は問題の少なかった順。"""
+    """``{"passed", "corrected", "all", "log"}`` を返す。``all`` は問題の少なかった順。
+
+    ``references`` は Stage 3 でラフに添付した参照。作り直しには同じものを、ラフを起点にした修正には
+    Stage 4 へ渡す役割の参照（公式画像と赤入れ）だけを添付する。
+    """
     stage_dir.mkdir(parents=True, exist_ok=True)
     official = [ref for ref in references if ref.get("official")]
-    inspection = _inspection_prompt(character, spec, layout, amount, design, bool(official))
+    markup = next((ref for ref in references if ref.get("kind") == "markup"), None)
+    inspection = _inspection_prompt(character, spec, layout, amount, design, bool(official), bool(markup))
     (stage_dir / "inspection_prompt.txt").write_text(inspection, encoding="utf-8")
 
     passed: list[Path] = []
@@ -170,7 +187,7 @@ def correct_roughs(
     ranked: list[tuple[int, Path]] = []
     log: list[dict[str, Any]] = []
     for index, rough in enumerate(roughs, start=1):
-        analysis = inspect_rough(rough, inspection, official, vision, character, layout)
+        analysis = inspect_rough(rough, inspection, official, vision, character, layout, markup)
         fix, must = _issue_lines(analysis)
         issue_count = len(fix) + len(must)
         entry: dict[str, Any] = {"rough_index": index, "file": rough.name, **analysis, "action": "passed"}
@@ -188,13 +205,14 @@ def correct_roughs(
                 action, stem = "regenerated", f"rough_{index:02d}_regen"
                 refs = references
                 text = ("[前回のラフで見つかった問題]\n" + "\n".join(notes)
-                        + "\n上の問題を解消して、最初から描き直してください。\n\n" + prompt)
+                        + "\n上の問題を解消して、最初から描き直してください。\n\n" + compose(refs))
             else:
                 action, stem = "corrected", f"rough_{index:02d}_corrected"
-                refs = [{"path": rough, "rel": rough.name, "role": "修正対象のラフ", "official": False}, *references]
+                refs = [{"path": rough, "rel": rough.name, "role": "修正対象のラフ", "official": False},
+                        *for_stage(references, 4)]
                 text = ("[修正の依頼]\n参照1 は修正対象のラフです。構図・画風・問題の無い部分はそのまま保ち、"
                         "次の点だけを最小限の変更で直してください。\n" + "\n".join(notes)
-                        + "\n\n以下は元の作画指定です。\n\n" + prompt)
+                        + "\n\n以下は元の作画指定です。\n\n" + compose(refs))
             try:
                 made = generator(text, references=refs, out_dir=stage_dir, stem=stem, aspect=aspect, count=1)
                 result_path = made.files[0]

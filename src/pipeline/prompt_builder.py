@@ -188,7 +188,11 @@ def _layout_block(spec: dict[str, Any], layout: str, amount: float) -> list[str]
 ITERATE_ROLE = "以前の生成結果（改稿の起点）"
 
 
-def _reference_block(references: list[dict[str, Any]] | None) -> list[list[str]]:
+def _reference_block(references: list[dict[str, Any]] | None, has_revisions: bool = False) -> list[list[str]]:
+    """添付する参照の一覧と、役割ごとの使い方。``references`` は、その呼び出しで実際に添付する順に渡す。
+
+    依頼者が渡した画像の役割（``kind``）は ``input_images.ROLES`` にある。
+    """
     if not references:
         return []
     lines = ["[参照画像の扱い]"]
@@ -199,8 +203,41 @@ def _reference_block(references: list[dict[str, Any]] | None) -> list[list[str]]
         "Use the official references only for the character's design. Do not copy their composition, pose,"
         " captions, labels, signatures or watermarks.",
     ]
-    if any(ref["role"] == ITERATE_ROLE for ref in references):
-        lines.append("- 改稿の起点の画像からは構図と良い点を引き継ぎ、[前回からの変更点] だけを反映する。")
+    first = {}
+    for number, ref in enumerate(references, start=1):
+        first.setdefault(ref.get("kind"), number)
+    if first.keys() & {"base", "markup", "composition", "reference"}:
+        lines.append("- キャラクターの外見は公式の参照画像と設定資料が正しい。依頼者が渡したほかの画像と食い違うときは、"
+                     "公式の参照画像と設定資料を採る。")
+    if "base" in first:
+        if "markup" in first:
+            rest = "、赤入れの指示" + ("と [前回からの変更点] " if has_revisions else "") + "だけを反映する。"
+        elif has_revisions:
+            rest = "、[前回からの変更点] だけを反映する。"
+        elif "rough" in first:        # 清書。赤入れなどで直した結果は、先に添付したラフにある
+            rest = "ぐ。直した点は、検査を通ったラフに従う。"
+        else:
+            rest = "、下の作画指定に合うように描き直す。"
+        lines.append(f"- 参照{first['base']}（加筆の起点）からは構図と良い点を引き継" + ("" if rest[0] == "ぐ" else "ぎ") + rest)
+    if "markup" in first:
+        target = f"参照{first['base']}（加筆の起点）" if "base" in first else "加筆の起点の絵"
+        lines += [
+            f"- 参照{first['markup']}（赤入れ）は、{target}に赤で指示を描き込んだもの。赤い線・丸・矢印・短い書き込みが"
+            "指す場所を、その指示のとおりに直す。赤い印と指示の文字そのものは絵に描かない。",
+            f"Reference {first['markup']} is a marked-up copy of the starting image: fix what the red marks point at,"
+            " and never draw the red marks or the handwritten notes themselves.",
+        ]
+    if "composition" in first:
+        lines += [
+            f"- 参照{first['composition']}（構図参考）からは、ポーズ・配置・画角だけを借りる。色を抜いてあるので、"
+            "色・画風・衣装・顔立ち・キャラクターの外見は写さない。",
+            f"Reference {first['composition']} is a greyscale composition guide: borrow only the pose, placement and"
+            " camera angle; take no colours, style, outfit or character design from it.",
+        ]
+    for number, ref in enumerate(references, start=1):
+        if ref.get("kind") == "reference":
+            lines.append(f"- 参照{number}（参考画像）は「{ref['note']}」のためだけに使う。"
+                         "それ以外の要素（キャラクターの外見・構図・画風）は写さない。")
     return [lines]
 
 
@@ -255,7 +292,7 @@ def build_prompt(
         f"Draw the character transformed into the shape \"{spec['name_en']}\" while staying clearly recognisable"
         " as the same character.",
     ]]
-    blocks += _reference_block(references)
+    blocks += _reference_block(references, bool(revisions))
     blocks += [_character_block(character), _keep_block(character), _shape_block(spec),
                _physique_block(character, spec), _layout_block(spec, layout, amount)]
     blocks += _closing_blocks(references, scene, style, extra, revisions, _unique(character["negative_keywords"]))
@@ -280,7 +317,7 @@ def build_joint_prompt(
         f"Draw these {len(subjects)} transformed characters together in one image. Each keeps its own design"
         " and its own shape; do not mix features between them.",
     ]]
-    blocks += _reference_block(references)
+    blocks += _reference_block(references, bool(revisions))
     avoid: list[str] = []
     for index, (character, spec, observation) in enumerate(subjects, start=1):
         blocks.append([f"===== {index} 体目: {character['name_ja']} ====="])

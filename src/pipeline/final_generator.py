@@ -31,7 +31,7 @@ JOINT_HEADER = (
 
 
 def rough_reference(path: Path, role: str = "検査を通ったラフ") -> dict[str, Any]:
-    return {"path": path, "rel": path.name, "role": role, "official": False}
+    return {"path": path, "rel": path.name, "role": role, "official": False, "kind": "rough"}
 
 
 def generate_finals(

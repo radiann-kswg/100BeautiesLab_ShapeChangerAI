@@ -39,6 +39,42 @@
 
 Stage 4 では、尾の本数と体数を「設定を知らせない別の呼び出し」で数えさせ、設定との照合をコードで行う。数え方には 1〜2 本の誤差がある。検査に失敗したラフは未検査と記録して通す。
 
+プロンプトの `[参照画像の扱い]` は、その呼び出しで実際に添付する画像の並びに合わせて、ステージごとに組み直す（修正では「参照1: 修正対象のラフ」、清書では「参照1: 検査を通ったラフ」から始まる）。
+
+## 入力画像
+
+依頼者の画像を、役割を付けて渡せる（CLI は `--images`、コネクタは各生成ツールの `images`）。役割ごとに、枚数の上限と渡すステージが決まっている。
+
+| 役割 | 意味 | 枚数 | Stage 3（ラフ） | Stage 4（検査と修正） | Stage 5（清書） |
+| --- | --- | --- | --- | --- | --- |
+| `base` | 加筆の起点 | 1 | ○（先頭） | × | ○ |
+| `markup` | `base` に赤で指示を描き込んだ画像（赤入れ）。`base` か `--iterate-from` が必要 | 1 | ○ | ○（直ったか、印が残っていないか） | × |
+| `composition` | 構図参考。ポーズ・配置・画角だけを借りる。自動でグレースケールにする | 1 | ○ | × | × |
+| `reference` | 生成画像と関係のない参考。`note`（何の参考にするか）が必須 | 3 | ○ | × | ○ |
+
+- どの役割の画像よりも、公式画像と設定資料を優先する（プロンプトにそう書く）。`reference` は `note` の用途にだけ使わせる。作風を借りたいときは、画像ではなく `--style` の文で伝える。
+- 出所（`provenance`）は 1 枚ごとに必須: `own_generated`（このパイプラインの生成結果）／`own_work`（依頼者自身の作品）／`own_photo`（依頼者自身が撮った写真）。第三者の作品は受け付けない（[AGENTS.md](../AGENTS.md) の「著作物の扱い」）。
+- 1 枚 10MB まで、PNG・JPEG・WebP（拡張子ではなく中身で判定する）。赤入れの画像は、加筆の起点と縦横比が 2% 以上違うと受け付けない。
+- 置き場は、CLI では `references/` か `outputs/` の中（`path`）、コネクタでは GCS の自分の接頭辞の下（`object_key`）。base64・Drive のファイル ID・任意の URL は受け付けない。
+- 入力画像は実行フォルダーの `inputs/` に写し（構図参考はグレースケールにしたもの）、役割・出所・SHA-256 を `run_meta.json` の `input_images` に残す。
+- `--ref` は従来どおり使える。`outputs/` の中の画像は加筆の起点、`references/` の中の画像は手元の追加資料として、Stage 3 と Stage 5 に渡す（Stage 4 には渡さなくなった）。
+- 合同生成（`--joint`）では、1 体ずつのラフを場面なしで描くため、入力画像は全員を描く清書（Stage 5）でだけ使う。赤入れが反映されたかの検査は行わない。
+
+```sh
+# references/ に置いた自分のラフを構図参考にする（先に --dry-run で確認）
+python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --dry-run \
+    --images references/images.json
+```
+
+`references/images.json` の例（PowerShell では JSON を引数に直接書くと引用符が崩れるので、ファイルにする）:
+
+```json
+[
+  {"role": "composition", "path": "references/my-pose-sketch.png", "provenance": "own_work"},
+  {"role": "reference", "path": "references/tile-floor.jpg", "provenance": "own_photo", "note": "床のタイルの質感"}
+]
+```
+
 ## 使い方
 
 ```sh
@@ -64,7 +100,13 @@ python -m src.pipeline.shape_pipeline --natural "85(ハッコ)が箱化してい
 # 改稿（以前の完成画像を起点に、変える点を指定してやり直す）
 python -m src.pipeline.shape_pipeline --badge 57 --mode 4 \
     --iterate-from 20261118_130500_gemini_mode04_NumberTales-57 --revisions "尾を 7 本そろえる"
+
+# 軽い加筆（起点の画像の編集 1 回だけ。観察・検査を省く）
+python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --quick --skip-canva \
+    --iterate-from 20261118_130500_gemini_mode04_NumberTales-57 --revisions "表情を笑顔にする"
 ```
+
+改稿の実行フォルダーは、名前の末尾に `_iter1`、その改稿をさらに改稿すると `_iter2` が付く。`--quick` の改稿は、起点の実行が `run_meta.json` の `design_observations` に残した Stage 2 の観察を使い回す（観察をやり直さない）。変える点は `--revisions` の文か、赤入れの画像（役割 `markup`）で伝え、両方あれば両方使う。
 
 生成は課金を伴う。先に `--dry-run` でプロンプトと参照画像を確認する。5 段階は 1 回の実行で、画像生成が最大 7 回ほど（ラフ 3、修正最大 3、完成 1）と Vision の呼び出しが 7 回ほどかかる。
 
@@ -86,11 +128,12 @@ PowerShell で `python` が Microsoft Store のエイリアスに当たって起
 | `--size` | 形状全体の大きさ（0.2〜2） |
 | `--scene` / `--style` / `--extra` | 場面・画風・追加の作画指定 |
 | `--ref` | 追加の参照画像。`references/` か `outputs/` の中のファイルに限る |
+| `--images` | 役割を付けた入力画像（上の「入力画像」）。JSON の配列か、それを書いた `.json` ファイル |
 | `--no-refs` | 公式画像を添付しない（Stage 2 の観察もできなくなる） |
 | `--iterate-from` / `--revisions` | 改稿の起点（実行フォルダー名か `outputs/` の中の画像）と、変える点（`;` 区切り） |
 | `--provider` | 画像モデルの提供元。`gemini`（既定）/ `openai` |
 | `--count` / `--rough-count` | 完成画像の枚数（1〜4）/ ラフの枚数（1〜5） |
-| `--quick` | 検査なしで 1 回だけ生成する |
+| `--quick` | 検査なしで 1 回だけ生成する。加筆の起点があれば、その画像の編集 1 回になる。`--joint` では加筆の起点があるときだけ使える |
 | `--skip-canva` | Canva 仕上げを省く |
 | `--height-cm` | 身長を上書きする（DB に身長が無いキャラクター向け） |
 
@@ -126,6 +169,7 @@ outputs/{YYYYMMDD_HHMMSS}_{provider}_mode{NN}_{作品}-{識別子}/
 ├── prompt.txt                      実際に使ったプロンプト（Stage 2 の観察を足したもの）
 ├── run_meta.json                   日時・モデル・対象・形状と寸法・参照元・各 Stage の結果・元の引数
 ├── notes.md                        確認結果と再試行で見直す点（手書き用）
+├── inputs/base_01.png など         入力画像の写し（指定したときだけ。構図参考はグレースケール）
 ├── stage2_reference/observation.json   観察結果、または失敗理由と回答
 ├── stage3_rough/rough_NN.png
 ├── stage4_correct/analysis_log.json    ラフごとの指摘・数えた本数・処置
@@ -133,7 +177,7 @@ outputs/{YYYYMMDD_HHMMSS}_{provider}_mode{NN}_{作品}-{識別子}/
 └── stage5_final/mode04_….png       完成画像（Canva 仕上げは stage5_final/canva/）
 ```
 
-合同生成は `…_joint_{対象}_{対象}/` に、キャラクターごとの `char_{対象}/stage2〜4` と、全員を描いた `stage5_final/joint_01.png` を置く。`--quick` は実行フォルダー直下に画像を置く。3 つの記録は生成 API を呼ぶ前に作るので、失敗時もプロンプトと条件が残る。`outputs/` は Git の追跡対象外。
+改稿は実行フォルダー名の末尾に `_iterN` が付く。合同生成は `…_joint_{対象}_{対象}/` に、キャラクターごとの `char_{対象}/stage2〜4` と、全員を描いた `stage5_final/joint_01.png` を置く。`--quick` は実行フォルダー直下に画像を置く。3 つの記録は生成 API を呼ぶ前に作るので、失敗時もプロンプトと条件が残る。`outputs/` は Git の追跡対象外。
 
 ## コネクタ（MCP サーバー）
 
@@ -159,9 +203,10 @@ Claude Desktop などに登録する例（パスは環境に合わせる）:
 
 | ツール | 内容 |
 | --- | --- |
-| `shapechange_generate_character` / `shapechange_generate_joint` | 単体・合同の生成。ジョブを登録して `job_id` を返す |
-| `shapechange_generate_from_natural` | 自然文の依頼から生成。読み取り結果は結果の `interpretation` に入る |
-| `shapechange_iterate` | 以前の実行と同じ指定で、その完成画像を起点に改稿する |
+| `shapechange_generate_character` / `shapechange_generate_joint` | 単体・合同の生成。ジョブを登録して `job_id` を返す。`images` で入力画像を渡せる |
+| `shapechange_generate_from_natural` | 自然文の依頼から生成。読み取り結果は結果の `interpretation` に入る。入力画像は渡せない |
+| `shapechange_iterate` | 以前の実行と同じ指定で、その完成画像を起点に改稿する。変える点は `revisions` か赤入れの画像（`images` の `markup`）で伝える。`quick` は起点の画像の編集 1 回だけ |
+| `shapechange_create_upload_slot` | 入力画像 1 枚の受け取り口。署名付き PUT URL（15 分有効）と `object_key` を返す |
 | `shapechange_job_status` | 進捗と完成画像のリンク。`awaiting_confirmation` なら利用者に確認する |
 | `shapechange_answer_reference_warning` | Stage 2 の観察失敗に対する続行／中止の回答（無回答は 30 分で中止） |
 | `shapechange_list_runs` / `shapechange_get_run_logs` | 実行の一覧と、プロンプト・検査ログ・中間画像 |
@@ -169,7 +214,19 @@ Claude Desktop などに登録する例（パスは環境に合わせる）:
 | `shapechange_refresh_canva_token` | Canva のアクセストークンの更新（上の「Canva の連携」） |
 | `shapechange_list_modes` / `shapechange_list_characters` | 指定できる形状とキャラクター |
 
+生成の 4 ツールは `dry_run: true` を受け付ける。ジョブを登録せず、プロンプト、役割の付いた画像の一覧（渡すステージ付き）、生成しうる画像の枚数の上限をその場で返す。画像の生成は呼ばない（自然文のツールだけは、依頼文の読み取りに OpenAI の API を使う）。
+
+コネクタへ画像を渡す手順:
+
+1. `shapechange_create_upload_slot` に形式（`image/png`・`image/jpeg`・`image/webp`）を渡す。
+2. 返ってきた `upload_command` のとおりに、`headers` を付けて `upload_url` へ PUT する（`curl --upload-file`）。
+3. `object_key` を、役割と出所と一緒に生成ツールの `images` に入れる。`shapechange_list_gcs_logs` が返す中間画像の `object_key` も、そのまま使える（出所は `own_generated`）。
+
+受け取った画像は GCS の `<GCS_PREFIX>/uploads/<日付>/` に置く。読めるのは自分の接頭辞の下だけで、同じバケットのほかの用途の画像は読まない。7 日で消す設定は、バケットのライフサイクルで行う（[docs/deploy-cloud-run.md](../docs/deploy-cloud-run.md)）。
+
 完成画像は `OUTPUT_SINK`（`local` / `drive` / `gcs`）へ届ける。Drive では `DRIVE_FOLDER_ID` の直下に `shapechange_{実行名}__…` の名前で置く。中間画像は Drive へ上げず、`GCS_BUCKET` があれば GCS、無ければサーバー内に残す。ジョブはメモリー上にあり、サーバーを再起動すると消える（実行の記録は `outputs/` に残る）。
+
+`OUTPUT_SINK` が `local` 以外で `GCS_BUCKET` があれば、実行の `run_meta.json` と完成画像を GCS の `<GCS_PREFIX>/runs/<run_id>/` にも置く。Cloud Run のインスタンスが止まって `outputs/` が消えたあとも、`shapechange_list_runs` に `location: gcs` として並び、`shapechange_iterate` の起点にできる（そのときに手元へ戻す）。`shapechange_get_run_logs` は、戻せた `run_meta.json` だけを返す（プロンプトと検査ログは戻らない）。
 
 GCS に置いた中間画像は、`shapechange_list_gcs_logs` で後から一覧できる。バケットを直接見るので、サーバーが再起動して `outputs/` が消えたあとも使える。GeneratorsAI の `numbertales_list_gcs_logs`・`numbertales_get_gcs_image` と同じ作りで、違いは 2 つ。取得できる画像を `GCS_PREFIX`（既定 `shapechange`）の下に限っていることと、一覧の既定の件数が 50 件であること（GeneratorsAI は 300 件）。
 
@@ -190,7 +247,8 @@ python -m src.shape.vm_bundle outputs/vm-shape-data
 | ファイル | 役割 |
 | --- | --- |
 | `pipeline/shape_pipeline.py` | CLI と実行本体（計画 → 5 段階 → 記録） |
-| `pipeline/prompt_builder.py` | プロンプトの組み立て（単体・合同） |
+| `pipeline/prompt_builder.py` | プロンプトの組み立て（単体・合同）。参照画像の役割ごとの使い方 |
+| `pipeline/input_images.py` | 入力画像の役割・検証・ステージへの振り分け・`inputs/` への書き出し |
 | `pipeline/design_reference.py` | Stage 2: 公式設定画の観察と確認待ち |
 | `pipeline/correction_generator.py` | Stage 4: 検査と修正 |
 | `pipeline/final_generator.py` | Stage 5: 清書と Canva 仕上げ |
@@ -209,6 +267,7 @@ python -m src.shape.vm_bundle outputs/vm-shape-data
 python tests/test_shape_source.py    # シェーダーからの寸法の読み取り
 python tests/test_dataset_gate.py    # キャラクター検索と AI 利用ゲート、衣装と画像の除外
 python tests/test_pipeline.py        # 5 段階・合同・改稿・自然文・記録
+python tests/test_input_images.py    # 入力画像の役割と検証、ステージへの振り分け、軽い加筆、受け取り口、GCS からの復元
 python tests/test_providers.py       # 外部 API の呼び出し方（SDK は偽物に差し替え）
 python tests/test_mcp_tools.py       # MCP ツールの中身（MCP SDK は不要）
 python tests/test_canva_token.py     # Canva の連携のトークンの取得・更新（Canva と GCP は偽物に差し替え）
