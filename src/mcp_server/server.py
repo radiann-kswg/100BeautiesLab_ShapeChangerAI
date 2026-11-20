@@ -139,6 +139,10 @@ class GenerateCharacterInput(_Common):
     def _one_target(self) -> "GenerateCharacterInput":
         if (self.mode is None) == (not self.object):
             raise ValueError("mode（形状番号）か object（物品化の変形先の名前）の、どちらか一方を指定してください。")
+        if self.object and (self.layout != "single" or self.amount != 1.0 or self.size != 1.0):
+            raise ValueError("object（物品化）は layout: single・変形完了だけに対応しています（amount と size は既定のまま）。")
+        if self.face and not self.object:
+            raise ValueError("face は object（物品化）と一緒に指定してください。")
         return self
 
 
