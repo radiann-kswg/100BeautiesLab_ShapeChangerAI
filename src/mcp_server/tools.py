@@ -36,7 +36,9 @@ def build_argv(params: dict[str, Any]) -> list[str]:
     """ツール入力（キーは CLI の引数名のアンダースコア表記）を引数リストにする。"""
     argv: list[str] = []
     for key, value in params.items():
-        if key == "subjects":            # [{"id": "85", "mode": 0}, ...] → --joint=85:0,73:3
+        if key == "subjects":            # [{"id": "85", "mode": 0, "state": "…"}, ...] → --joint=85:0,73:3 --states=…;
+            states = [" ".join(str(item.get("state") or "").replace(";", "、").split()) for item in value]
+            argv += _option("states", ";".join(states) if any(states) else None)
             value = ",".join(f"{item['id']}:{item['mode']}" for item in value)
             key = "joint"
         elif key == "revisions" and isinstance(value, list):
@@ -228,6 +230,17 @@ def list_modes() -> list[dict[str, Any]]:
 
 def list_characters(work: str | None = None) -> list[dict[str, Any]]:
     work_key = dataset.normalize_work_key(work)
-    return [{"work": record.get("work_key"), "badge": dataset.full_badge(record),
-             "id": dataset.identity_label(record), "name": dataset.display_name(record)}
-            for record in dataset.get_characters() if not work_key or record.get("work_key") == work_key]
+    characters = []
+    for record in dataset.get_characters():
+        if work_key and record.get("work_key") != work_key:
+            continue
+        entry = {"work": record.get("work_key"), "badge": dataset.full_badge(record),
+                 "id": dataset.identity_label(record), "name": dataset.display_name(record)}
+        if states := dataset.state_names(record):          # 名前で選べる状態（state に渡す）
+            entry["states"] = states
+        if '"Costume"' in json.dumps((record.get("data") or {}).get("AppearanceDetail") or []):
+            costumes = dataset.costume_names(record)       # 名前で選べる衣装（costume に渡す）。通常衣装だけなら出さない
+            if costumes not in ([], ["usual"]):
+                entry["costumes"] = costumes
+        characters.append(entry)
+    return characters

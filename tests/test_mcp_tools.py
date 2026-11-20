@@ -267,6 +267,13 @@ def test_lists_for_choosing_inputs():
     characters = tools.list_characters("NumberTales")
     assert {"work": "#Works_NumberTales", "badge": "NTS-57", "id": "57", "name": "57(イズナ)"} in characters
     assert all(item["work"] == "#Works_NumberTales" for item in characters)
+    # 名前で選べる状態と衣装は、持っているキャラクターにだけ添える
+    by_badge = {item["badge"]: item for item in tools.list_characters()}
+    assert by_badge["NTS-35"]["costumes"] == ["miko", "usual"] and "states" not in by_badge["NTS-35"]
+    assert by_badge["SAR-EZ6"]["states"] == ["beasted", "normal"]
+    joint = tools.build_argv({"subjects": [{"id": "SCG-E", "mode": 4, "state": "afterChanged"},
+                                           {"id": "SCG-S", "mode": 4, "state": ""}]})
+    assert joint == ["--states=afterChanged;", "--joint=SCG-E:4,SCG-S:4"]
 
 
 if __name__ == "__main__":

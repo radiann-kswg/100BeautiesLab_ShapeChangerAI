@@ -60,3 +60,10 @@ AGENTS.md                                          |   12 +
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+### 最適化メモ（2026-11-20、手動同期のあと）
+
+- 差分把握: `_creations-ai` `b7ccb20..6f5b37d`。manifest に `AppearanceDetail[].Detachable`、`Formation` の `afterChanged`（扇 三春・財前 小里・神夜崎 ユノ）と `normal`／`beasted`（巳刻カミツ）、`Costume` の `onBusiness`・`private`・`jacketless` が届いた。D-Vines の 4 件は不許可になり、61 のアイドル衣装の項目と画像は無くなった（許可 191→187 件）。
+- 影響判定: フィールドの削除や改名は無い。同期前のコードのままで既存のテストは通る（失敗は、以前からのスフィリアの参照画像の 1 件だけ）。
+- 実施した変更: 状態と衣装の指定（`--state`・`--costume`・`--states`、コネクタの `state`・`costume`・`subjects[].state`）を足し、`Detachable` を読むようにした。要件は `docs/requirements-5stage-connector.md` の「画像入力・状態の指定・物品化」。
+- 残したもの: 61 のアイドル衣装の画像の固定指定（`_AI_EXCLUDED_IMAGE_STEMS`）は、上流で消えたあとも二重の備えとして残した。
+- テスト結果: `tests/` の 8 ファイルを Windows 実機で実行し、上の 1 件以外はすべて成功。

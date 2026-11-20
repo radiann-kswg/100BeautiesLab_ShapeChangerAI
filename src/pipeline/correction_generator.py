@@ -31,6 +31,7 @@ from ..shape.modes import appendage_text, limb_text
 from ..utils.provider import GenerationResult, ProviderError
 from .design_reference import Vision, observation_block
 from .input_images import for_stage
+from .prompt_builder import state_lines
 
 Generator = Callable[..., GenerationResult]
 #: 添付する参照の並びから、作画指定のプロンプトを組む関数。
@@ -77,6 +78,8 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
         f"「{spec['name_ja']}」へ形状変化した姿として生成されたラフです。{_LAYOUT_NOTE[layout]}",
         "[形状の指定]\n" + "\n".join(shape),
         "[キャラクターの識別特徴]\n" + "\n".join(identity),
+        "\n".join(state_lines(character) + ["- この指定で変えた体型と衣装は、公式画像と違っていても violations や missing に入れない。"]
+                  if state_lines(character) else []),
         observation_block(design),
         "[検査のしかた]\n"
         "- shape_issues: 輪郭が指定の形状でない、縦横比や厚みが大きく違う、顔の位置が違う、"

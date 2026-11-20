@@ -252,6 +252,42 @@ def test_excluded_costume_is_absent_from_real_manifest():
     assert "idol" not in json.dumps([roi.get("images"), roi.get("preferred_reference_images")])
 
 
+def test_state_and_costume_are_chosen_by_db_name_or_given_as_free_text():
+    kamitsu = dataset.find_character(badge="SAR-EZ6")
+    default, beast = dataset.summarize_character(kamitsu), dataset.summarize_character(kamitsu, state="beasted")
+    assert default["states"] == ["beasted", "normal"] and default["state"] == "" and default["tail_count"] == 1
+    assert beast["state"] == "beasted" and beast["tail_count"] is None       # 尾の本数が無い状態では、本数を照合しない
+    assert any(line.startswith("[別状態 beasted") for line in default["appearance_details"])
+    assert any(line.startswith("[別状態 normal") for line in beast["appearance_details"])
+    assert not any("別状態 beasted" in line for line in beast["appearance_details"])
+
+    satoko = dataset.find_character(badge=35)
+    usual, miko = dataset.summarize_character(satoko), dataset.summarize_character(satoko, costume="miko")
+    assert usual["costumes"] == ["miko", "usual"] and usual["costume"] == "" and miko["costume"] == "miko"
+    text = json.dumps(miko, ensure_ascii=False)
+    assert "(miko)" in text and "(usual)" not in text and "only for usual outfit" not in text
+    assert "(miko)" not in json.dumps(usual, ensure_ascii=False)
+
+    # 名前に当たらない文は、体型と着用物を変える自由な指定として残る。外せるのは Detachable の品目だけ
+    free = dataset.summarize_character(satoko, state="寝起きで  ぼんやり", costume="黒いワンピース")
+    assert (free["state"], free["state_note"], free["costume_note"]) == ("", "寝起きで ぼんやり", "黒いワンピース")
+    assert free["detachable"] == [] and "(usual)" in json.dumps(free, ensure_ascii=False)
+    assert dataset.summarize_character(dataset.find_character(badge=14), "humanoid")["detachable"]
+
+    # 状態の文は、条件付きの値（身長）の選び方にも効く
+    muna = dataset.find_character(badge=67)
+    assert dataset.summarize_character(muna)["height_cm"] == 145.0
+    strong = dataset.summarize_character(muna, state="筋装備時の姿")
+    assert (strong["height_cm"], strong["height_note"]) == (190.0, "筋装備時")
+
+    try:        # 第三者がデザインした衣装は、データに現れても選べない
+        dataset.summarize_character(dataset.find_character(badge=61), costume="idol")
+    except dataset.CharacterLookupError as err:
+        assert "AI 向けの利用から外している" in str(err)
+    else:
+        raise AssertionError("idol を選べてしまった")
+
+
 if __name__ == "__main__":
     from _runner import run_module_tests
 

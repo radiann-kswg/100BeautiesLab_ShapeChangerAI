@@ -392,6 +392,41 @@ def test_iterate_starts_from_a_previous_result_and_records_the_link():
     assert outside[0] == 2                       # outputs/ の外の画像は起点にできない
 
 
+def test_state_and_costume_reach_the_prompt_and_the_inspection():
+    code, out, _ = _run(["--badge", "SAR-EZ6", "--mode", "4", "--state", "beasted", "--dry-run"])
+    assert code == 0 and "- 状態: beasted（設定資料にある状態）" in out and "選べる状態: beasted, normal" in out
+    assert "この指定を採る" in out and "体型と衣装・着用物だけ" not in out          # 名前で選んだ状態は DB の項目に従う
+    _, out, _ = _run(["--badge", "14", "--mode", "4", "--state", "ブレザーを脱いでいる", "--dry-run"])
+    assert "- 状態の指定: ブレザーを脱いでいる" in out and "変えてよいのは、体型と衣装・着用物だけ" in out
+    assert "外してよい着用物は、着脱できる設定のもの（" in out
+    _, out, _ = _run(["--badge", "57", "--mode", "4", "--state", "上着を脱いでいる", "--dry-run"])
+    assert "着脱できる設定の着用物は無い" in out
+    _, plain, _ = _run(["--badge", "57", "--mode", "4", "--dry-run"])
+    assert "[状態と衣装の指定" not in plain
+    code, out, _ = _run(["--badge", "35", "--mode", "4", "--costume", "miko", "--dry-run"])
+    assert code == 0 and "- 衣装: miko（設定資料にある衣装）" in out and "(usual)" not in out
+    code, _, err = _run(["--badge", "61", "--mode", "4", "--costume", "idol", "--dry-run"])
+    assert code == 2 and "AI 向けの利用から外している" in err
+
+    # 合同は、キャラクターごとに --states で指定する
+    code, out, _ = _run(["--joint", "SCG-E:4,SCG-S:4", "--states", "afterChanged;", "--dry-run"])
+    assert code == 0 and out.count("- 状態: afterChanged（設定資料にある状態）") == 1
+    for bad in (["--joint", "SCG-E:4,SCG-S:4", "--state", "afterChanged"], ["--badge", "57", "--mode", "4", "--states", "a"],
+                ["--joint", "SCG-E:4,SCG-S:4", "--states", "a;b;c"]):
+        assert _run(bad + ["--dry-run"])[0] == 2, bad
+
+    vision = _fake_vision([_OK])
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out, _ = _run(["--badge", "35", "--mode", "4", "--costume", "miko", "--out", tmp, "--rough-count", "1",
+                             "--skip-canva"], generate=_FakeGenerator(), vision=vision)
+        assert code == 0, out
+        (run_dir,) = Path(tmp).iterdir()
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+    inspection = next(call for call in vision.seen if "検査係" in call["text"])
+    assert "- 衣装: miko" in inspection["text"] and "violations や missing に入れない" in inspection["text"]
+    assert meta["subjects"][0]["character"]["costume"] == "miko"
+
+
 def test_natural_request_is_mapped_to_arguments_and_reported():
     asked = []
 

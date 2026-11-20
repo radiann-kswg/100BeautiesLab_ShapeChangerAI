@@ -115,6 +115,10 @@ class GenerateCharacterInput(_Common):
     name: Optional[str] = Field(None, description="名前の一部（badge の代わりに指定）")
     mode: int = Field(..., ge=0, le=15, description="形状番号（shapechange_list_modes で一覧）")
     form: Optional[Literal["humanoid", "corefolder"]] = Field(None, description="変形前の形態")
+    state: str = Field("", max_length=200, description="変形前の姿の状態。shapechange_list_characters の states にある名前"
+                                                       "（afterChanged, beasted など）か、体型と着用物だけを変える自由な文。省くと既定の状態")
+    costume: str = Field("", max_length=200, description="変形前の姿の衣装。shapechange_list_characters の costumes にある名前"
+                                                         "（miko など）か、衣装を変える自由な文。省くと通常衣装")
     layout: Literal["single", "sequence", "five-view"] = "single"
     amount: float = Field(1.0, gt=0, le=1, description="変形量。1 未満は途中の姿（layout=single のみ）")
     size: float = Field(1.0, ge=0.2, le=2.0, description="形状全体の大きさ")
@@ -127,6 +131,7 @@ class GenerateCharacterInput(_Common):
 class JointSubject(_Base):
     id: str = Field(..., description="番号・バッジ、または名前の一部")
     mode: int = Field(..., ge=0, le=15)
+    state: str = Field("", max_length=200, description="このキャラクターの変形前の状態（単体生成の state と同じ）")
 
 
 class GenerateJointInput(_Common):
@@ -312,7 +317,7 @@ async def shapechange_list_modes() -> str:
 
 @mcp.tool(name="shapechange_list_characters", annotations={"title": "キャラクターの一覧", **_READ})
 async def shapechange_list_characters(params: ListCharactersInput) -> str:
-    """AI 利用が許可されたキャラクターを返す。"""
+    """AI 利用が許可されたキャラクターを返す。名前で選べる状態（states）と衣装（costumes）があれば添える。"""
     return _json(tools.list_characters(params.work))
 
 

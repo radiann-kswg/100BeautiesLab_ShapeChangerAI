@@ -187,6 +187,10 @@ def build_parser() -> argparse.ArgumentParser:
     who.add_argument("--work", help="作品キー（例: NumberTales, SinisterChangingGirls）")
     who.add_argument("--form", choices=dataset.FORMS, help="変形前の形態（形態を持つ作品のみ。既定 humanoid）")
     who.add_argument("--height-cm", type=float, help="身長（cm）を上書きする。DB に身長が無いキャラクター向け")
+    who.add_argument("--state", default="", help="変形前の姿の状態。DB の状態名（afterChanged, beasted など。--dry-run に一覧）か、"
+                                                 "体型と着用物を変える自由な文")
+    who.add_argument("--costume", default="", help="変形前の姿の衣装。DB の衣装名（miko など。--dry-run に一覧）か、衣装を変える自由な文")
+    who.add_argument("--states", default="", metavar="状態;状態", help="--joint の各キャラクターの状態（--joint と同じ順に ; 区切り。空欄は既定）")
     who.add_argument("--joint", metavar="ID:形状,ID:形状", help="複数キャラクターを 1 枚に描く（例: 85:0,73:3。2〜4 体）")
     who.add_argument("--natural", metavar="依頼文", help="自然文の依頼からキャラクターと形状を読み取る")
 
@@ -320,6 +324,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             parser.error("--joint は --badge / --name / --mode と一緒に指定できません。")
         if args.layout != "single" or args.amount != 1.0:
             parser.error("--joint は --layout single・変形完了だけに対応しています。")
+        if args.state or args.costume:
+            parser.error("--joint では、状態を --states でキャラクターごとに指定してください（--costume は単体だけ）。")
+    elif args.states:
+        parser.error("--states は --joint と組み合わせてください（単体は --state）。")
     elif args.mode is None:
         parser.error("--mode を指定してください（--list-modes で一覧）。")
     if not 0.0 < args.amount <= 1.0:
@@ -411,13 +419,19 @@ def build_plan(args: argparse.Namespace, argv: list[str] | None = None, *,
             pairs = [item.strip().rsplit(":", 1) for item in args.joint.split(",") if item.strip()]
             if not 2 <= len(pairs) <= 4 or any(len(pair) != 2 or not pair[1].isdigit() for pair in pairs):
                 raise ValueError("--joint は「ID:形状番号」を 2〜4 件、カンマ区切りで指定してください（例: 85:0,73:3）。")
-            targets = [(dataset.find_any(token, args.work), int(mode)) for token, mode in pairs]
+            states = [item.strip() for item in args.states.split(";")] if args.states else []
+            if len(states) > len(pairs):
+                raise ValueError("--states の件数が --joint のキャラクター数より多くなっています。")
+            states += [""] * (len(pairs) - len(states))
+            targets = [(dataset.find_any(token, args.work), int(mode), state)
+                       for (token, mode), state in zip(pairs, states)]
         else:
-            targets = [(dataset.find_character(badge=args.badge, name=args.name, work_key=args.work), args.mode)]
+            targets = [(dataset.find_character(badge=args.badge, name=args.name, work_key=args.work),
+                        args.mode, args.state)]
 
         subjects: list[Subject] = []
-        for record, mode in targets:
-            character = dataset.summarize_character(record, args.form)
+        for record, mode, state in targets:
+            character = dataset.summarize_character(record, args.form, state=state, costume=args.costume)
             if args.height_cm and not args.joint:
                 character.update(height_cm=args.height_cm, height_note="実行時の指定")
             spec = build_shape_spec(
@@ -456,7 +470,8 @@ def _subject_meta(subject: Subject) -> dict[str, Any]:
     character, spec = subject.character, subject.spec
     return {
         "character": {k: character[k] for k in
-                      ("name_ja", "name_en", "work_key", "db_key", "identity", "form", "height_cm", "height_note")},
+                      ("name_ja", "name_en", "work_key", "db_key", "identity", "form", "height_cm", "height_note",
+                       "state", "state_note", "costume", "costume_note")},
         "ai_training_gate": subject.gate,
         "shape": {
             "mode": spec["mode"], "key": spec["key"], "name_ja": spec["name_ja"], "size": spec["size"],
@@ -687,6 +702,10 @@ def describe_plan(plan: Plan) -> dict[str, Any]:
         "warnings": _plan_warnings(plan),
         "subjects": [{"character": subject.character["name_ja"],
                       "shape": f"Mode {subject.spec['mode']:02d} {subject.spec['name_ja']}",
+                      "state": subject.character["state"] or subject.character["state_note"] or "既定",
+                      "costume": subject.character["costume"] or subject.character["costume_note"] or "usual",
+                      "selectable_states": subject.character["states"],
+                      "selectable_costumes": subject.character["costumes"],
                       "references": listed(subject.references), "prompt": subject.prompt}
                      for subject in plan.subjects],
         "shared_references": listed(plan.shared_references),
@@ -763,6 +782,10 @@ def run(argv: list[str] | None = None, *, ask: Callable[..., dict[str, Any]] | N
         print(f"[INFO] 5 段階: ラフ {per}{plan.rough_count} 枚 → 検査と修正 → 完成 {args.count} 枚"
               f"（Canva 仕上げ: {'しない' if args.skip_canva else '連携が設定されていれば行う'}）")
     for subject in plan.subjects:
+        character = subject.character
+        if character["states"] or character["costumes"]:
+            print(f"[INFO] {character['name_ja']} の選べる状態: {', '.join(character['states']) or 'なし'}"
+                  f" / 選べる衣装: {', '.join(character['costumes']) or 'なし'}")
         for index, ref in enumerate(subject.references, start=1):
             stages = "" if ref.get("official") else f"（{_stage_note(ref, plan.joint)}）"
             print(f"[INFO] {subject.character['name_ja']} 参照{index}: {ref['role']}{stages} — {ref['rel']}")

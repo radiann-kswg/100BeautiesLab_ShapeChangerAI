@@ -49,9 +49,9 @@ python deploy/deploy_cloud_run.py                # ビルドして配置する
 
 ## 入力画像の置き場
 
-入力画像は、バケットのライフサイクルで 7 日後に消す。この設定はバケットに 1 回入れればよく、配置のたびには要らない。2026-11-20 の時点では、まだ入れていない。
+入力画像は、バケットのライフサイクルで 7 日後に消す。この設定はバケットに 1 回入れればよく、配置のたびには要らない。2026-11-20 に、下のルールを入れた（それまでライフサイクルの設定は無かった）。
 
-`generators-ai-outputs` は GeneratorsAI と共用で、`--lifecycle-file` はバケットの設定を丸ごと置き換える。先にいまの設定を読み、既存のルールを残したまま、次のルールを足す。
+`generators-ai-outputs` は GeneratorsAI と共用で、`--lifecycle-file` はバケットの設定を丸ごと置き換える。ルールを足すときは、先にいまの設定を読み、既存のルールを残したまま足す。
 
 ```sh
 gcloud storage buckets describe gs://generators-ai-outputs --format="json(lifecycle_config)"

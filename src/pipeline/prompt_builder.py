@@ -69,6 +69,34 @@ def _character_block(character: dict[str, Any]) -> list[str]:
     return lines
 
 
+def state_lines(character: dict[str, Any]) -> list[str]:
+    """状態と衣装の指定を、生成と検査の両方に渡す文にする。指定が無ければ空。
+
+    DB の名前で選んだ状態・衣装は、要約の項目がすでにその状態・衣装のものになっている。名前に当たらない
+    自由な文は、体型（#Element_BodyType）と衣装・着用物（#Element_CostumeItem）だけを変える。
+    """
+    lines: list[str] = []
+    if character.get("state"):
+        lines.append(f"- 状態: {character['state']}（設定資料にある状態）。上の外見の項目は、この状態のもの。")
+    if character.get("costume"):
+        lines.append(f"- 衣装: {character['costume']}（設定資料にある衣装）。上の外見の項目は、この衣装のもの。")
+    if character.get("state_note"):
+        lines.append(f"- 状態の指定: {character['state_note']}")
+    if character.get("costume_note"):
+        lines.append(f"- 衣装の指定: {character['costume_note']}")
+    if not lines:
+        return []
+    if character.get("state_note") or character.get("costume_note"):
+        lines.append("- 上の指定で変えてよいのは、体型と衣装・着用物だけ。耳、尾の種類と本数、髪、瞳、番号や紋章は設定のまま保つ。")
+        if character.get("state_note"):
+            items = " / ".join(character.get("detachable") or [])
+            lines.append(f"- 外してよい着用物は、着脱できる設定のもの（{items}）だけ。ほかの衣装は着たままにする。" if items
+                         else "- 着脱できる設定の着用物は無い。衣装を脱がせる指定は反映しない。")
+    lines.append("- 公式の参照画像と観察は、通常の状態・通常衣装の姿を写している。体型と衣装がこの指定と食い違うときは、"
+                 "この指定を採る。顔立ち・髪・配色の基準は参照画像のまま。")
+    return ["[状態と衣装の指定（変形前の姿）]", *lines]
+
+
 def _keep_block(character: dict[str, Any]) -> list[str]:
     lines = [
         "[変形後も維持する特徴（必須）]",
@@ -267,7 +295,7 @@ def _closing_blocks(references: list[dict[str, Any]] | None, scene: str, style: 
 
 
 def _join(blocks: list[list[str]]) -> str:
-    return "\n\n".join("\n".join(block) for block in blocks) + "\n"
+    return "\n\n".join("\n".join(block) for block in blocks if block) + "\n"
 
 
 def build_prompt(
@@ -293,7 +321,7 @@ def build_prompt(
         " as the same character.",
     ]]
     blocks += _reference_block(references, bool(revisions))
-    blocks += [_character_block(character), _keep_block(character), _shape_block(spec),
+    blocks += [_character_block(character), state_lines(character), _keep_block(character), _shape_block(spec),
                _physique_block(character, spec), _layout_block(spec, layout, amount)]
     blocks += _closing_blocks(references, scene, style, extra, revisions, _unique(character["negative_keywords"]))
     return _join(blocks)
@@ -321,7 +349,7 @@ def build_joint_prompt(
     avoid: list[str] = []
     for index, (character, spec, observation) in enumerate(subjects, start=1):
         blocks.append([f"===== {index} 体目: {character['name_ja']} ====="])
-        blocks += [_character_block(character), _keep_block(character), _shape_block(spec)]
+        blocks += [_character_block(character), state_lines(character), _keep_block(character), _shape_block(spec)]
         if observation:
             blocks.append(observation.split("\n"))
         avoid += character["negative_keywords"]
