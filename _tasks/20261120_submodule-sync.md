@@ -67,3 +67,9 @@ AGENTS.md                                          |   12 +
 - 実施した変更: 状態と衣装の指定（`--state`・`--costume`・`--states`、コネクタの `state`・`costume`・`subjects[].state`）を足し、`Detachable` を読むようにした。要件は `docs/requirements-5stage-connector.md` の「画像入力・状態の指定・物品化」。
 - 残したもの: 61 のアイドル衣装の画像の固定指定（`_AI_EXCLUDED_IMAGE_STEMS`）は、上流で消えたあとも二重の備えとして残した。
 - テスト結果: `tests/` の 8 ファイルを Windows 実機で実行し、上の 1 件以外はすべて成功。
+
+### 再同期（2026-11-20 17:40、CreationsAI #4 の修正の取り込み）
+
+- 差分把握: `_creations-ai` `6f5b37d..64e951c`（creations-db は `f2d10b1` のまま）。`ai-dataset/image-index.json` に部位図（`AppearanceDetail[].img_PNGName`）119 件が戻った。manifest のレコード本文と許可件数（187 件）は変わらない。
+- 影響判定: このリポジトリは部位図のうち `tails_unit` だけを使うので、コード変更は要らない。
+- テスト結果: `tests/` の 8 ファイルを Windows 実機で実行し、以前からの 1 件（スフィリアの参照画像）以外はすべて成功。
