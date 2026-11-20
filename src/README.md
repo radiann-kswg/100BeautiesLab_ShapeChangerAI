@@ -21,6 +21,10 @@
 
 `Formation` が `humanoid` / `corefolder` 以外の項目は、作品内の状態（豹変系女子の `beforeChange` / `afterChanged`）として扱う。`beforeChange` は通常の項目として描く。それ以外の状態の項目は「別状態だけの特徴。今回の絵には描かない」と付けて要約に残す。公式設定画には両方の状態が描かれているため、項目を捨てると観察と検査が通常の姿の特徴と取り違える。状態を選んで描くオプションはない。
 
+`AppearanceDetail` の `Costume`（衣装）が `usual` 以外の項目は、manifest を読む時点で落とす。AIHints に写された同じ項目の文面も落とす。描くのは通常衣装だけで、別衣装（NumberTales 35 の `miko`、60 の `otaku` など）の特徴を混ぜない。`Costume` を持たない項目は、どの衣装でも描く特徴として残す。衣装を選んで描くオプションはない。
+
+権利上 AI に渡さない画像（`_AI_EXCLUDED_IMAGE_STEMS`）は、同じ時点でレコードの画像一覧から外す。いまの対象は、NumberTales 61 のアイドル衣装（衣装デザインが第三者によるもの）を描いた 3 枚。上流で衣装・画像の単位の指定ができるようになるまでの、このリポジトリ側の除外。
+
 作品メタの共通色（獣爾騎兵の制服共通色 `$EnumDef_CommonColor`）は manifest に無く、どのキャラクターが使うかの記録も無いため、配色へ足さない。別作品のレコードからの外見の継承（豹変系女子の N が NumberTales の 0 を参照する設定）も manifest に展開されないため、要約には入らない。
 
 ## 5 段階
@@ -203,7 +207,7 @@ python -m src.shape.vm_bundle outputs/vm-shape-data
 
 ```sh
 python tests/test_shape_source.py    # シェーダーからの寸法の読み取り
-python tests/test_dataset_gate.py    # キャラクター検索と AI 利用ゲート
+python tests/test_dataset_gate.py    # キャラクター検索と AI 利用ゲート、衣装と画像の除外
 python tests/test_pipeline.py        # 5 段階・合同・改稿・自然文・記録
 python tests/test_providers.py       # 外部 API の呼び出し方（SDK は偽物に差し替え）
 python tests/test_mcp_tools.py       # MCP ツールの中身（MCP SDK は不要）

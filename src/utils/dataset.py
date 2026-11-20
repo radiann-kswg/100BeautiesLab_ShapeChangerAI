@@ -11,6 +11,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,84 @@ def load_manifest() -> list[dict[str, Any]]:
             "  git submodule update --init --recursive を実行してください。"
         )
     with target.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
+        return [_usual_costume_only(json.loads(line), line) for line in handle if line.strip()]
+
+
+# 描く衣装は通常衣装だけ。別衣装の項目が混ざると、2 着分の特徴が 1 枚に出る。衣装を選ぶオプションはない。
+_DEFAULT_COSTUME = "usual"
+# 権利上 AI に渡さない画像。上流で指定できるようになるまで下流で外す（CreationsDB #62）。
+# NumberTales 61 のアイドル衣装（デザインが第三者のもの）を描いた画像で、衣装の記述は
+# 上の「通常衣装だけ」で落ちる。衣装を選べるようにするときは、この衣装を選択肢から外す。
+_AI_EXCLUDED_IMAGE_STEMS = frozenset({
+    "chr-dsgn-alt_wipNTS-61-idol", "emstk_corefolderNTS-61-idol1", "emstk_corefolderNTS-61-idol2",
+})
+
+
+def is_ai_excluded_image(path: Any) -> bool:
+    """AI に渡さない画像か。パス・URL・拡張子なしの DB 記載名のどれでも受ける。"""
+    return isinstance(path, str) and Path(path.replace("\\", "/")).stem in _AI_EXCLUDED_IMAGE_STEMS
+
+
+def _drop_excluded_images(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {key: _drop_excluded_images(value) for key, value in node.items()
+                if not is_ai_excluded_image(value)}
+    if isinstance(node, list):
+        return [_drop_excluded_images(item) for item in node
+                if not is_ai_excluded_image(item.get("path") if isinstance(item, dict) else item)]
+    return node
+
+
+def _entry_texts(entry: dict[str, Any]) -> set[str]:
+    return {value.strip() for attr in entry.get("Attrs") or [] if isinstance(attr, dict)
+            for value in (attr.get("value_EN"), attr.get("value_JP"))
+            if isinstance(value, str) and value.strip()}
+
+
+def _usual_costume_only(record: dict[str, Any], raw_line: str = "") -> dict[str, Any]:
+    """別衣装（``Costume`` が usual 以外）の記述と、AI に渡さない画像を外したレコードを返す。
+
+    AppearanceDetail の項目に加え、AIHints に写されたその項目の文面も落とす。AIHints は項目の
+    文面をそのまま、または ", " でつないで持つので、落とす項目だけが持つ文面で照合する。
+    """
+    if any(stem in raw_line for stem in _AI_EXCLUDED_IMAGE_STEMS):
+        record = dict(record)
+        for key in ("images", "preferred_reference_images", "ai_hints"):
+            if record.get(key):
+                record[key] = _drop_excluded_images(record[key])
+
+    data = record.get("data")
+    details = data.get("AppearanceDetail") if isinstance(data, dict) else None
+    entries = [e for e in details or [] if isinstance(e, dict)]
+
+    def gone(entry: dict[str, Any]) -> bool:
+        return bool(entry.get("Costume")) and entry["Costume"] != _DEFAULT_COSTUME
+
+    if not any(gone(e) for e in entries):
+        return record
+    kept = set().union(*(_entry_texts(e) for e in entries if not gone(e)))
+    texts = sorted(set().union(*(_entry_texts(e) for e in entries if gone(e))) - kept, key=len, reverse=True)
+    alternatives = "|".join(re.escape(text) for text in texts)
+    listed = re.compile(rf"(?:^|[,:] )(?:{alternatives})(?:$|, |\))") if texts else None
+
+    def scrub(node: Any) -> Any:
+        if isinstance(node, dict):
+            # つないだ文（prompt_export 等）は、部分的に削ると残骸が出るので空にする。要約には使っていない。
+            return {key: "" if isinstance(value, str) and any(text in value for text in texts) else scrub(value)
+                    for key, value in node.items()}
+        if isinstance(node, list):
+            return [scrub(item) for item in node
+                    if not (listed and isinstance(item, str) and listed.search(item))]
+        return node
+
+    data = dict(data, AppearanceDetail=[e for e in data["AppearanceDetail"]
+                                        if not (isinstance(e, dict) and gone(e))])
+    if data.get("AIHints"):
+        data["AIHints"] = scrub(data["AIHints"])
+    record = dict(record, data=data)
+    if record.get("ai_hints"):
+        record["ai_hints"] = scrub(record["ai_hints"])
+    return record
 
 
 def is_character(record: dict[str, Any]) -> bool:

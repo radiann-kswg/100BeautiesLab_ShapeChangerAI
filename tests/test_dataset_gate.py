@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -196,6 +197,46 @@ def test_shape_codes_counts_notes_and_story_states_reach_the_summary():
     assert fox and all(line.startswith("[別状態 afterChanged") for line in fox)
     assert runo["tail_count"] is None                                 # 豹変後の尾は既定の本数にしない
     assert dataset.summarize_character(dataset.find_character(badge=57))["tail_count"] == 7   # TailsUnit が優先
+
+
+def test_only_usual_costume_reaches_the_summary():
+    def entry(costume, text):
+        return {"Formation": "humanoid", "Costume": costume, "DesignElement": "#Element_CostumeItem",
+                "Attrs": [{"AttrLabel": "#DesignAttr_Overview", "value_EN": text},
+                          {"AttrLabel": "#DesignAttr_Color", "value_EN": "dark"}]}
+    tags = ["pink vest (usual outfit)", "red uniform (idol outfit)", "long ponytail"]
+    record = {
+        "data": {"AppearanceDetail": [entry("usual", "pink vest (usual outfit)"),
+                                      entry("idol", "red uniform (idol outfit)"), entry(None, "long ponytail")]},
+        "ai_hints": {"common": {"identity_tags": list(tags)},
+                     "forms": {"humanoid": {"ai_tags": list(tags), "prompt_export": ", ".join(tags)}}},
+        "images": {"corefolder": ["a/emstk_corefolderNTS-61-1.png", "a/emstk_corefolderNTS-61-idol1.png"]},
+        "preferred_reference_images": {"common": {"design_sheet": "a/chr-dsgn-alt_wipNTS-61-idol.png"}},
+    }
+    result = dataset._usual_costume_only(record, "emstk_corefolderNTS-61-idol1 chr-dsgn-alt_wipNTS-61-idol")
+    assert [e["Costume"] for e in result["data"]["AppearanceDetail"]] == ["usual", None]
+    assert result["ai_hints"]["common"]["identity_tags"] == ["pink vest (usual outfit)", "long ponytail"]
+    assert result["ai_hints"]["forms"]["humanoid"] == {"ai_tags": ["pink vest (usual outfit)", "long ponytail"],
+                                                        "prompt_export": ""}
+    assert result["images"] == {"corefolder": ["a/emstk_corefolderNTS-61-1.png"]}
+    assert result["preferred_reference_images"] == {"common": {}}
+    assert len(record["data"]["AppearanceDetail"]) == 3          # 元のレコードは変えない
+    # 衣装の印が無いレコードはそのまま返す。data が辞書でないレコード（辞書・型定義）でも落ちない
+    plain = {"data": {"AppearanceDetail": [entry(None, "long ponytail")]}}
+    assert dataset._usual_costume_only(plain) is plain
+    assert dataset._usual_costume_only({"data": []}) == {"data": []}
+
+
+def test_excluded_costume_is_absent_from_real_manifest():
+    # NumberTales 61 のアイドル衣装は AI に渡さない（記述も画像も）。35 と 60 は通常衣装だけを描く
+    for badge, marks in (("61", ("idol outfit",)), ("35", ("(miko)",)), ("60", ("otaku outfit",))):
+        record = dataset.find_character(badge=badge)
+        summary = json.dumps(dataset.summarize_character(record, "humanoid"), ensure_ascii=False)
+        assert not any(mark in summary for mark in marks), (badge, marks)
+        assert not any(dataset.is_ai_excluded_image(ref["rel"])
+                       for form in dataset.FORMS for ref in dataset.collect_reference_images(record, form))
+    roi = dataset.find_character(badge="61")
+    assert "idol" not in json.dumps([roi.get("images"), roi.get("preferred_reference_images")])
 
 
 if __name__ == "__main__":
