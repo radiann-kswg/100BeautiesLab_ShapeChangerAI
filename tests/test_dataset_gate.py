@@ -165,6 +165,19 @@ def test_palette_notes_and_character_relative_sides_survive_summary():
     assert "髪飾りだけ" in summary["palette"][1]
 
 
+def test_normal_state_is_drawn_and_counted_by_default():
+    summary = dataset.summarize_character({"data": {"AppearanceDetail": [
+        {"Formation": "normal", "BodyPart": ["#BodyPart_Tail"], "Attrs": [
+            {"value_EN": "snake tail"}, {"AttrLabel": "#DesignAttr_Count", "value_Num": 1}]},
+        {"Formation": "beasted", "BodyPart": ["#BodyPart_Tail"], "Attrs": [
+            {"value_EN": "giant tail"}, {"AttrLabel": "#DesignAttr_Count", "value_Num": 3}]},
+    ]}})
+    normal, beasted = summary["appearance_details"]
+    assert normal == "Tail: snake tail; count: 1"                     # 獣化前は通常の項目
+    assert beasted.startswith("[別状態 beasted")
+    assert summary["tail_count"] == 1
+
+
 def test_shape_codes_counts_notes_and_story_states_reach_the_summary():
     record = {"data": {"AppearanceDetail": [
         {"BodyPart": ["#BodyPart_Ear"], "Attrs": [

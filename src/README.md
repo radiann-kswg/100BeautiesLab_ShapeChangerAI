@@ -19,7 +19,7 @@
 
 `AppearanceDetail` の属性は、辞書コード（`vdict_EarShapeType` など）を末尾の語で、個体差の補足（`about_EN` / `about_JP`）を括弧で、本数（`value_Num`）を `count: 1` の形で要約へ入れる。項目の `Note_EN` / `Note_JP`（通常制服などの適用範囲）も残す。`TailsUnit` を持たない作品では、尾の項目に書かれた本数を Stage 4 の本数の照合に使う。
 
-`Formation` が `humanoid` / `corefolder` 以外の項目は、作品内の状態（豹変系女子の `beforeChange` / `afterChanged`）として扱う。`beforeChange` は通常の項目として描く。それ以外の状態の項目は「別状態だけの特徴。今回の絵には描かない」と付けて要約に残す。公式設定画には両方の状態が描かれているため、項目を捨てると観察と検査が通常の姿の特徴と取り違える。状態を選んで描くオプションはない。
+`Formation` が `humanoid` / `corefolder` 以外の項目は、作品内の状態（豹変系女子の `beforeChange` / `afterChanged`、獣爾騎兵の `normal` / `beasted`）として扱う。`beforeChange` と `normal` は通常の項目として描く。それ以外の状態の項目は「別状態だけの特徴。今回の絵には描かない」と付けて要約に残す。公式設定画には両方の状態が描かれているため、項目を捨てると観察と検査が通常の姿の特徴と取り違える。状態を選んで描くオプションはない。
 
 `AppearanceDetail` の `Costume`（衣装）が `usual` 以外の項目は、manifest を読む時点で落とす。AIHints に写された同じ項目の文面も落とす。描くのは通常衣装だけで、別衣装（NumberTales 35 の `miko`、60 の `otaku` など）の特徴を混ぜない。`Costume` を持たない項目は、どの衣装でも描く特徴として残す。衣装を選んで描くオプションはない。
 

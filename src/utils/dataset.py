@@ -376,8 +376,9 @@ def resolve_height_cm(record: dict[str, Any]) -> tuple[float | None, str]:
 
 
 # FORMS 以外の Formation は作品内の状態（豹変系女子の豹変前後など）。既定で描く状態だけを通常の項目にする。
-# shortcut: 既定の状態は豹変系女子の beforeChange だけ。他作品が状態別の外見を持ったらここへ足す。
-_DEFAULT_STATES = ("beforeChange",)
+# 既定で描くのは、豹変系女子の beforeChange（豹変前）と獣爾騎兵の normal（獣化前）。
+# shortcut: 既定の状態は作品ごとの語を並べただけ。他作品が状態別の外見を持ったらここへ足す。
+_DEFAULT_STATES = ("beforeChange", "normal")
 
 
 def _drawn_by_default(state: Any, form: str | None) -> bool:
