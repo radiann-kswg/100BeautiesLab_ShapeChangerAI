@@ -66,6 +66,29 @@ def test_tool_input_becomes_cli_arguments_without_option_injection():
     assert joint == ["--joint=85:0,73:3", "--revisions=a; b"]
 
 
+def test_connector_accepts_all_seven_supported_input_image_roles():
+    from pydantic import ValidationError
+
+    from src.mcp_server.server import GenerateJointInput
+
+    images = [
+        {"object_key": "base", "role": "base", "provenance": "own_generated"},
+        {"object_key": "markup", "role": "markup", "provenance": "own_work"},
+        {"object_key": "composition", "role": "composition", "provenance": "own_work"},
+        *[{"object_key": f"reference-{index}", "role": "reference", "note": "質感",
+           "provenance": "own_photo"} for index in range(3)],
+        {"object_key": "object", "role": "object", "provenance": "own_work"},
+    ]
+    request = {"subjects": [{"id": "85", "mode": 0}, {"id": "73", "mode": 3}], "images": images}
+    assert len(GenerateJointInput(**request).images) == 7
+    try:
+        GenerateJointInput(**{**request, "images": [*images, images[-1]]})
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("7 枚を超える入力画像を受け付けた")
+
+
 def test_job_runs_the_pipeline_and_publishes_the_finals():
     with tempfile.TemporaryDirectory() as tmp, _outputs(tmp):
         def pipeline(argv, **hooks):

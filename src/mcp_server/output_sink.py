@@ -543,11 +543,11 @@ def restore_run(run_id: str, output_base: Path) -> bool:
     for item in meta.get("results") or []:
         rel = PurePosixPath(str(item.get("file") or ""))
         if not rel.parts or rel.is_absolute() or ".." in rel.parts:
-            continue
+            return False
         try:
             data = read_object(_run_prefix(name) + rel.as_posix(), _RUN_FILE_MAX_BYTES)
         except ValueError:
-            continue
+            return False
         target = run_dir.joinpath(*rel.parts)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)

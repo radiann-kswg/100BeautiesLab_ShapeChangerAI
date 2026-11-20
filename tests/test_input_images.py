@@ -118,7 +118,7 @@ def _gcs(bucket: _Bucket):
 def test_roles_provenance_and_counts_are_checked_before_generation():
     files = {"base": _image(), "mark": _image(), "tall": _image(64, 80), "near": _image(101, 100),
              "square": _image(100, 100), "jpeg": _image(fmt="JPEG"), "gif": b"GIF89a" + b"\x00" * 32,
-             "text": b"not an image at all"}
+             "text": b"not an image at all", "truncated": _image()[:33]}
     own = {"provenance": "own_work"}
     ok = _resolve([{"object_key": "base", "role": "base", "provenance": "own_generated"},
                    {"object_key": "mark", "role": "markup", **own},
@@ -145,6 +145,9 @@ def test_roles_provenance_and_counts_are_checked_before_generation():
     # 中身で形式を判定する
     _refused([{"object_key": "gif", "role": "base", **own}], "PNG・JPEG・WebP", files)
     _refused([{"object_key": "text", "role": "base", **own}], "PNG・JPEG・WebP", files)
+    _refused([{"object_key": "truncated", "role": "base", **own}], "画像として開けません", files)
+    with patch.object(input_images, "MAX_PIXELS", 1000):
+        _refused([{"object_key": "base", "role": "base", **own}], "画素数", files)
     with patch.object(input_images, "MAX_BYTES", 16):
         _refused([{"object_key": "base", "role": "base", **own}], "MB まで", files)
 
@@ -240,8 +243,8 @@ def test_quick_iteration_is_one_edit_that_reuses_the_earlier_observation():
         code, out, _ = _run(base + ["--rough-count", "1"], generate=_Painter(), vision=_fake_vision([_OK]))
         assert code == 0, out
         (first,) = Path(tmp).iterdir()
-        assert "尾は 7 本に見える" in json.loads((first / "run_meta.json").read_text(encoding="utf-8"))[
-            "design_observations"]["NumberTales-57:humanoid"]
+        first_observations = json.loads((first / "run_meta.json").read_text(encoding="utf-8"))["design_observations"]
+        assert any("尾は 7 本に見える" in block for block in first_observations.values())
         (Path(tmp) / "marks").mkdir()
         (Path(tmp) / "marks" / "red.png").write_bytes(_image())
         spec = json.dumps([{"role": "markup", "path": str(Path(tmp) / "marks" / "red.png"), "provenance": "own_work"}])
@@ -252,6 +255,7 @@ def test_quick_iteration_is_one_edit_that_reuses_the_earlier_observation():
         assert code == 0, out
         second = next(path for path in Path(tmp).iterdir() if path.name.endswith("_iter1"))
         meta = json.loads((second / "run_meta.json").read_text(encoding="utf-8"))
+        observation = next(iter(meta["design_observations"].values()))
         painter2 = _Painter()
         _run(base + ["--quick", "--iterate-from", second.name, "--revisions", "表情を笑顔に"],
              generate=painter2, vision=no_vision)
@@ -260,7 +264,7 @@ def test_quick_iteration_is_one_edit_that_reuses_the_earlier_observation():
     (call,) = painter.calls
     assert meta["pipeline"] == "quick" and meta["retry_of"] == first.name and meta["status"] == "ok"
     assert _kinds(call["references"])[:2] == ["base", "markup"]
-    assert call["prompt"].startswith("[軽い加筆の依頼]") and "尾は 7 本に見える" in call["prompt"]
+    assert call["prompt"].startswith("[軽い加筆の依頼]") and observation in call["prompt"]
     assert "参照1（加筆の起点）からは構図と良い点を引き継ぎ、赤入れの指示だけを反映する。" in call["prompt"]
     assert meta["results"] == [{"file": "mode04_NumberTales-57_01.png", "status": "ok"}]
     # 単発の改稿が引き継いだ観察は、その次の改稿にも渡る
@@ -354,6 +358,25 @@ def test_connector_dry_run_returns_the_prompt_and_the_images_with_their_roles():
     assert refused["status"] == "error" and "許可されていません" in refused["message"]
 
 
+def test_joint_connector_dry_run_returns_joint_prompt_and_attachment_order():
+    key = "shapechange/uploads/20261120/base.png"
+    with _gcs(_Bucket({key: _image()})), contextlib.redirect_stdout(io.StringIO()):
+        params = tools.build_argv({
+            "subjects": [{"id": "85", "mode": 0}, {"id": "73", "mode": 3}],
+            "images": [{"object_key": key, "role": "base", "provenance": "own_generated"}],
+        })
+        preview = tools.dry_run(params)
+
+    assert preview["status"] == "dry_run"
+    joint = preview["joint_preview"]
+    assert joint["prompt"].startswith("[清書の依頼]")
+    attachments = joint["attachments"]
+    assert [item["role"].split(":")[0] for item in attachments[:2]] == [
+        "検査を通ったラフ", "検査を通ったラフ"]
+    assert attachments[2]["role"] == "加筆の起点"
+    assert all(item["stage"] == "Stage 5" for item in attachments)
+
+
 def test_iteration_survives_a_restart_by_restoring_the_run_from_gcs():
     with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as fresh, _gcs(_Bucket()) as bucket:
         code, out, _ = _run(["--badge", "57", "--mode", "4", "--out", tmp, "--rough-count", "1", "--skip-canva"],
@@ -389,6 +412,23 @@ def test_iteration_survives_a_restart_by_restoring_the_run_from_gcs():
                 summary = shape_pipeline.run_pipeline(_without_out(argv) + [f"--out={fresh}"], generate=painter)
         assert summary["status"] == "ok" and "尾は 7 本に見える" in painter.calls[0]["prompt"]
         assert _kinds(painter.calls[0]["references"])[0] == "base"
+
+
+def test_restore_run_leaves_metadata_absent_until_all_images_are_available():
+    name = "retryable-run"
+    prefix = f"shapechange/runs/{name}/"
+    meta = json.dumps({"results": [{"file": "stage5_final/final.png"}]}).encode()
+    bucket = _Bucket({prefix + "run_meta.json": meta})
+    with tempfile.TemporaryDirectory() as tmp, _gcs(bucket):
+        run_dir = Path(tmp) / name
+        assert output_sink.restore_run(name, Path(tmp)) is False
+        assert not (run_dir / "run_meta.json").exists()
+
+        bucket.store[prefix + "stage5_final/final.png"] = _image()
+        assert output_sink.restore_run(name, Path(tmp)) is True
+        assert (run_dir / "stage5_final" / "final.png").read_bytes() == bucket.store[
+            prefix + "stage5_final/final.png"]
+        assert (run_dir / "run_meta.json").read_bytes() == meta
 
 
 def _without_out(argv: list[str]) -> list[str]:

@@ -27,6 +27,7 @@ from typing import Any, Callable
 from ..utils.image_io import detect_image_format
 
 MAX_BYTES = 10 * 1024 * 1024
+MAX_PIXELS = 40_000_000
 MAX_NOTE = 200
 ASPECT_TOLERANCE = 0.02
 ALL_STAGES = (3, 4, 5)
@@ -95,7 +96,13 @@ def dimensions(data: bytes) -> tuple[int, int]:
         raise ValueError("入力画像の確認には Pillow が必要です: pip install -r requirements.txt") from err
     try:
         with Image.open(BytesIO(data)) as image:
-            return image.size
+            width, height = image.size
+            if width * height > MAX_PIXELS:
+                raise ValueError(f"画像の画素数が上限（{MAX_PIXELS:,}）を超えています。")
+            image.load()
+            return width, height
+    except ValueError:
+        raise
     except Exception as err:  # noqa: BLE001 — 壊れた画像は理由を問わず受け付けない
         raise ValueError("画像として開けません。") from err
 

@@ -259,7 +259,11 @@ class Subject:
     @property
     def key(self) -> str:
         """以前の実行の観察を引き当てるキー（キャラクターと形態）。"""
-        return f"{self.character['slug']}:{self.character.get('form') or ''}"
+        return json.dumps(
+            [self.record.get("work_key"), self.record.get("db_key"), self.record.get("record_identity"),
+             self.character.get("form") or ""],
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
 
     @property
     def label(self) -> str:
@@ -323,6 +327,20 @@ class Plan:
     @property
     def rough_count(self) -> int:
         return self.args.rough_count or (2 if self.joint else 3)
+
+
+def _joint_references(plan: Plan) -> list[dict[str, Any]]:
+    """合同の 1 枚に添付する、入力画像と各キャラクターの公式画像 1 枚ずつ。"""
+    return plan.shared_references + [ref for subject in plan.subjects for ref in subject.references[:1]]
+
+
+def _build_joint_prompt(plan: Plan, references: list[dict[str, Any]],
+                        observations: dict[str, str]) -> str:
+    return build_joint_prompt(
+        [(subject.character, subject.spec, observations.get(subject.key, "")) for subject in plan.subjects],
+        references=references, scene=plan.args.scene, style=plan.args.style, extra=plan.args.extra,
+        revisions=plan.revisions,
+    )
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -582,10 +600,6 @@ def execute(
             except Exception as err:  # noqa: BLE001 — 通知の失敗で生成を止めない
                 print(f"[WARN] {stage} の通知に失敗しました: {err}")
 
-    def joint_references() -> list[dict[str, Any]]:
-        """合同の 1 枚に添付する、入力画像と各キャラクターの公式画像 1 枚ずつ。"""
-        return plan.shared_references + [ref for subject in plan.subjects for ref in subject.references[:1]]
-
     def with_block(text: str, block: str) -> str:
         return text + ("\n" + block + "\n" if block else "")
 
@@ -595,12 +609,8 @@ def execute(
             # 観察と検査を省く。加筆の起点が以前の実行なら、その実行が残した観察を使い回す
             blocks = {subject.key: plan.observations.get(subject.key) or "" for subject in plan.subjects}
             if plan.joint:
-                references = joint_references()
-                prompt = build_joint_prompt(
-                    [(subject.character, subject.spec, blocks[subject.key]) for subject in plan.subjects],
-                    references=references, scene=args.scene, style=args.style, extra=args.extra,
-                    revisions=plan.revisions,
-                )
+                references = _joint_references(plan)
+                prompt = _build_joint_prompt(plan, references, blocks)
             else:
                 references = for_stage(first.references, 3)
                 prompt = with_block(first.build(references), blocks[first.key])
@@ -656,11 +666,9 @@ def execute(
         if plan.joint:
             roughs = [rough_reference(images[0], f"検査を通ったラフ: {subject.character['name_ja']}")
                       for subject, _, images, _ in best]
-            references = joint_references()
-            final_prompt = build_joint_prompt(
-                [(subject.character, subject.spec, block) for subject, block, _, _ in best],
-                references=roughs + references, scene=args.scene, style=args.style, extra=args.extra,
-                revisions=plan.revisions,
+            references = _joint_references(plan)
+            final_prompt = _build_joint_prompt(
+                plan, roughs + references, {subject.key: block for subject, block, _, _ in best}
             )
             header = JOINT_HEADER
             title = "ShapeChange " + " + ".join(subject.character["name_ja"] for subject in plan.subjects)
@@ -719,7 +727,7 @@ def describe_plan(plan: Plan) -> dict[str, Any]:
     args = plan.args
     listed = lambda refs: [{"role": ref["role"], "source": ref["rel"], "stages": _stage_note(ref, plan.joint)}  # noqa: E731
                            for ref in refs]
-    return {
+    summary = {
         "status": "dry_run",
         "message": "生成していません。内容を利用者に示し、承認を得てから dry_run なしで呼んでください。",
         "label": plan.label,
@@ -739,6 +747,29 @@ def describe_plan(plan: Plan) -> dict[str, Any]:
         "shared_references": listed(plan.shared_references),
         "input_images": [input_images.describe(image) for image in plan.images],
     }
+    if plan.joint:
+        references = _joint_references(plan)
+        if args.quick:
+            attachments = references
+            joint_prompt = _build_joint_prompt(plan, attachments, plan.observations)
+            if plan.iteration:
+                joint_prompt = QUICK_EDIT_HEADER + joint_prompt
+        else:
+            roughs = [{
+                "kind": "rough", "role": f"検査を通ったラフ: {subject.character['name_ja']}",
+                "rel": f"Stage 4 ラフ（{subject.character['name_ja']}、実行時に生成）",
+            } for subject in plan.subjects]
+            attachments = roughs + references
+            joint_prompt = JOINT_HEADER + _build_joint_prompt(plan, attachments, {})
+        summary["joint_preview"] = {
+            "prompt": joint_prompt,
+            "attachments": [{"role": ref["role"], "source": ref["rel"],
+                             "stage": "quick edit" if args.quick else "Stage 5"}
+                            for ref in attachments],
+            "observations": ("reused" if plan.observations else "not available")
+            if args.quick else "generated during Stage 2",
+        }
+    return summary
 
 
 def _plan_from(argv: list[str], ask: Callable[..., dict[str, Any]] | None,

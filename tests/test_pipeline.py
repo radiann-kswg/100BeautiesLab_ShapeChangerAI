@@ -289,9 +289,22 @@ def test_joint_run_inspects_each_character_then_draws_them_together():
 
 
 def test_joint_run_keeps_same_slug_characters_in_separate_directories():
-    generator, vision = _FakeGenerator(), _fake_vision([_OK, _OK])
-    vision.measurements = [{}, {}]
+    generator = _FakeGenerator()
+    base_vision = _fake_vision([_OK, _OK])
+    observations = iter(["Observation for SCG-W", "Observation for SCG-AW"])
+
+    def vision(text, images):
+        if "観察してください" in text:
+            return {"observations": [next(observations)], "unknowns": [], "conflicts": []}
+        return base_vision(text, images)
+
     with tempfile.TemporaryDirectory() as tmp:
+        dry_run = shape_pipeline.preview(["--joint=SCG-W:4,SCG-AW:4"])["joint_preview"]
+        assert dry_run["prompt"].startswith("[清書の依頼]")
+        assert [item["role"].split(":")[0] for item in dry_run["attachments"][:2]] == [
+            "検査を通ったラフ", "検査を通ったラフ"]
+        assert dry_run["observations"] == "generated during Stage 2"
+
         code, out, _ = _run(["--joint", "SCG-W:4,SCG-AW:4", "--rough-count", "1",
                              "--out", tmp, "--skip-canva"], generate=generator, vision=vision)
         assert code == 0, out
@@ -305,6 +318,23 @@ def test_joint_run_keeps_same_slug_characters_in_separate_directories():
         assert all(ref["role"].startswith("検査を通ったラフ: ") for ref in rough_references)
         assert len({Path(ref["path"]).parent for ref in rough_references}) == 2
         assert (run_dir / "stage5_final" / "joint_01.png").is_file()
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+        saved = meta["design_observations"]
+        assert len(saved) == 2
+        assert any("Observation for SCG-W" in block for block in saved.values())
+        assert any("Observation for SCG-AW" in block for block in saved.values())
+
+        quick_argv = ["--joint=SCG-W:4,SCG-AW:4", "--quick", f"--iterate-from={run_dir.name}", f"--out={tmp}"]
+        preview = shape_pipeline.preview(quick_argv)["joint_preview"]
+        assert preview["prompt"].startswith("[軽い加筆の依頼]")
+        assert "Observation for SCG-W" in preview["prompt"] and "Observation for SCG-AW" in preview["prompt"]
+        assert preview["observations"] == "reused"
+        assert preview["attachments"][0]["role"] == shape_pipeline.ITERATE_ROLE
+
+        quick_generator = _FakeGenerator()
+        code, out, _ = _run(quick_argv, generate=quick_generator)
+        assert code == 0, out
+        assert quick_generator.calls[0]["prompt"] == preview["prompt"]
 
 
 def test_joint_synthesis_failure_is_returned_without_using_individual_roughs():

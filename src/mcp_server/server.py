@@ -96,7 +96,7 @@ class InputImage(_Base):
 
 
 def _images_field() -> Any:
-    return Field(default_factory=list, max_length=6,
+    return Field(default_factory=list, max_length=7,
                  description="入力画像。キャラクターの外見は公式画像と設定資料が優先される")
 
 
