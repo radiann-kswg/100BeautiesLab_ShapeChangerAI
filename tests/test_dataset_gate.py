@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -164,6 +165,19 @@ def test_palette_notes_and_character_relative_sides_survive_summary():
     assert "髪飾りだけ" in summary["palette"][1]
 
 
+def test_normal_state_is_drawn_and_counted_by_default():
+    summary = dataset.summarize_character({"data": {"AppearanceDetail": [
+        {"Formation": "normal", "BodyPart": ["#BodyPart_Tail"], "Attrs": [
+            {"value_EN": "snake tail"}, {"AttrLabel": "#DesignAttr_Count", "value_Num": 1}]},
+        {"Formation": "beasted", "BodyPart": ["#BodyPart_Tail"], "Attrs": [
+            {"value_EN": "giant tail"}, {"AttrLabel": "#DesignAttr_Count", "value_Num": 3}]},
+    ]}})
+    normal, beasted = summary["appearance_details"]
+    assert normal == "Tail: snake tail; count: 1"                     # 獣化前は通常の項目
+    assert beasted.startswith("[別状態 beasted")
+    assert summary["tail_count"] == 1
+
+
 def test_shape_codes_counts_notes_and_story_states_reach_the_summary():
     record = {"data": {"AppearanceDetail": [
         {"BodyPart": ["#BodyPart_Ear"], "Attrs": [
@@ -196,6 +210,82 @@ def test_shape_codes_counts_notes_and_story_states_reach_the_summary():
     assert fox and all(line.startswith("[別状態 afterChanged") for line in fox)
     assert runo["tail_count"] is None                                 # 豹変後の尾は既定の本数にしない
     assert dataset.summarize_character(dataset.find_character(badge=57))["tail_count"] == 7   # TailsUnit が優先
+
+
+def test_only_usual_costume_reaches_the_summary():
+    def entry(costume, text):
+        return {"Formation": "humanoid", "Costume": costume, "DesignElement": "#Element_CostumeItem",
+                "Attrs": [{"AttrLabel": "#DesignAttr_Overview", "value_EN": text},
+                          {"AttrLabel": "#DesignAttr_Color", "value_EN": "dark"}]}
+    tags = ["pink vest (usual outfit)", "red uniform (idol outfit)", "long ponytail"]
+    record = {
+        "data": {"AppearanceDetail": [entry("usual", "pink vest (usual outfit)"),
+                                      entry("idol", "red uniform (idol outfit)"), entry(None, "long ponytail")]},
+        "ai_hints": {"common": {"identity_tags": list(tags)},
+                     "forms": {"humanoid": {"ai_tags": list(tags), "prompt_export": ", ".join(tags)}}},
+        "images": {"corefolder": ["a/emstk_corefolderNTS-61-1.png", "a/emstk_corefolderNTS-61-idol1.png"]},
+        "preferred_reference_images": {"common": {"design_sheet": "a/chr-dsgn-alt_wipNTS-61-idol.png"}},
+    }
+    result = dataset._usual_costume_only(record, "emstk_corefolderNTS-61-idol1 chr-dsgn-alt_wipNTS-61-idol")
+    assert [e["Costume"] for e in result["data"]["AppearanceDetail"]] == ["usual", None]
+    assert result["ai_hints"]["common"]["identity_tags"] == ["pink vest (usual outfit)", "long ponytail"]
+    assert result["ai_hints"]["forms"]["humanoid"] == {"ai_tags": ["pink vest (usual outfit)", "long ponytail"],
+                                                        "prompt_export": ""}
+    assert result["images"] == {"corefolder": ["a/emstk_corefolderNTS-61-1.png"]}
+    assert result["preferred_reference_images"] == {"common": {}}
+    assert len(record["data"]["AppearanceDetail"]) == 3          # 元のレコードは変えない
+    # 衣装の印が無いレコードはそのまま返す。data が辞書でないレコード（辞書・型定義）でも落ちない
+    plain = {"data": {"AppearanceDetail": [entry(None, "long ponytail")]}}
+    assert dataset._usual_costume_only(plain) is plain
+    assert dataset._usual_costume_only({"data": []}) == {"data": []}
+
+
+def test_excluded_costume_is_absent_from_real_manifest():
+    # NumberTales 61 のアイドル衣装は AI に渡さない（記述も画像も）。35 と 60 は通常衣装だけを描く
+    for badge, marks in (("61", ("idol outfit",)), ("35", ("(miko)",)), ("60", ("otaku outfit",))):
+        record = dataset.find_character(badge=badge)
+        summary = json.dumps(dataset.summarize_character(record, "humanoid"), ensure_ascii=False)
+        assert not any(mark in summary for mark in marks), (badge, marks)
+        assert not any(dataset.is_ai_excluded_image(ref["rel"])
+                       for form in dataset.FORMS for ref in dataset.collect_reference_images(record, form))
+    roi = dataset.find_character(badge="61")
+    assert "idol" not in json.dumps([roi.get("images"), roi.get("preferred_reference_images")])
+
+
+def test_state_and_costume_are_chosen_by_db_name_or_given_as_free_text():
+    kamitsu = dataset.find_character(badge="SAR-EZ6")
+    default, beast = dataset.summarize_character(kamitsu), dataset.summarize_character(kamitsu, state="beasted")
+    assert default["states"] == ["beasted", "normal"] and default["state"] == "" and default["tail_count"] == 1
+    assert beast["state"] == "beasted" and beast["tail_count"] is None       # 尾の本数が無い状態では、本数を照合しない
+    assert any(line.startswith("[別状態 beasted") for line in default["appearance_details"])
+    assert any(line.startswith("[別状態 normal") for line in beast["appearance_details"])
+    assert not any("別状態 beasted" in line for line in beast["appearance_details"])
+
+    satoko = dataset.find_character(badge=35)
+    usual, miko = dataset.summarize_character(satoko), dataset.summarize_character(satoko, costume="miko")
+    assert usual["costumes"] == ["miko", "usual"] and usual["costume"] == "" and miko["costume"] == "miko"
+    text = json.dumps(miko, ensure_ascii=False)
+    assert "(miko)" in text and "(usual)" not in text and "only for usual outfit" not in text
+    assert "(miko)" not in json.dumps(usual, ensure_ascii=False)
+
+    # 名前に当たらない文は、体型と着用物を変える自由な指定として残る。外せるのは Detachable の品目だけ
+    free = dataset.summarize_character(satoko, state="寝起きで  ぼんやり", costume="黒いワンピース")
+    assert (free["state"], free["state_note"], free["costume_note"]) == ("", "寝起きで ぼんやり", "黒いワンピース")
+    assert free["detachable"] == [] and "(usual)" in json.dumps(free, ensure_ascii=False)
+    assert dataset.summarize_character(dataset.find_character(badge=14), "humanoid")["detachable"]
+
+    # 状態の文は、条件付きの値（身長）の選び方にも効く
+    muna = dataset.find_character(badge=67)
+    assert dataset.summarize_character(muna)["height_cm"] == 145.0
+    strong = dataset.summarize_character(muna, state="筋装備時の姿")
+    assert (strong["height_cm"], strong["height_note"]) == (190.0, "筋装備時")
+
+    try:        # 第三者がデザインした衣装は、データに現れても選べない
+        dataset.summarize_character(dataset.find_character(badge=61), costume="idol")
+    except dataset.CharacterLookupError as err:
+        assert "AI 向けの利用から外している" in str(err)
+    else:
+        raise AssertionError("idol を選べてしまった")
 
 
 if __name__ == "__main__":

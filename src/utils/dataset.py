@@ -11,6 +11,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,118 @@ def load_manifest() -> list[dict[str, Any]]:
             "  git submodule update --init --recursive を実行してください。"
         )
     with target.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
+        return [_usual_costume_only(json.loads(line), line) for line in handle if line.strip()]
+
+
+# 描く衣装は 1 着だけ。別衣装の項目が混ざると、2 着分の特徴が 1 枚に出る。指定が無ければ通常衣装で、
+# DB に項目のある別衣装は with_costume() で選ぶ。
+_DEFAULT_COSTUME = "usual"
+# 衣装デザインが第三者のもので、AI 向けの利用に了承が無い衣装。データに現れても選ばせない。
+_AI_EXCLUDED_COSTUMES = frozenset({"idol"})
+# 権利上 AI に渡さない画像。上流で指定できるようになるまで下流で外す（CreationsDB #62）。
+# NumberTales 61 のアイドル衣装（デザインが第三者のもの）を描いた画像で、衣装の記述は
+# 上の「通常衣装だけ」で落ちる。衣装を選べるようにするときは、この衣装を選択肢から外す。
+_AI_EXCLUDED_IMAGE_STEMS = frozenset({
+    "chr-dsgn-alt_wipNTS-61-idol", "emstk_corefolderNTS-61-idol1", "emstk_corefolderNTS-61-idol2",
+})
+
+
+def is_ai_excluded_image(path: Any) -> bool:
+    """AI に渡さない画像か。パス・URL・拡張子なしの DB 記載名のどれでも受ける。"""
+    return isinstance(path, str) and Path(path.replace("\\", "/")).stem in _AI_EXCLUDED_IMAGE_STEMS
+
+
+def _drop_excluded_images(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {key: _drop_excluded_images(value) for key, value in node.items()
+                if not is_ai_excluded_image(value)}
+    if isinstance(node, list):
+        return [_drop_excluded_images(item) for item in node
+                if not is_ai_excluded_image(item.get("path") if isinstance(item, dict) else item)]
+    return node
+
+
+def _entry_texts(entry: dict[str, Any]) -> set[str]:
+    return {value.strip() for attr in entry.get("Attrs") or [] if isinstance(attr, dict)
+            for value in (attr.get("value_EN"), attr.get("value_JP"))
+            if isinstance(value, str) and value.strip()}
+
+
+def _record_key(record: dict[str, Any]) -> tuple[Any, ...]:
+    return (record.get("_type"), record.get("work_key"), record.get("db_key"), record.get("record_identity"))
+
+
+def _raw_record(record: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """衣装で絞る前の、manifest のままのレコードと、その行。"""
+    key = _record_key(record)
+    with manifest_path().open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip() and _record_key(raw := json.loads(line)) == key:
+                return raw, line
+    return record, ""
+
+
+def costume_names(record: dict[str, Any]) -> list[str]:
+    """DB に項目があって選べる衣装の名前（通常衣装を含む。AI 向けに使えない衣装は除く）。"""
+    details = (_raw_record(record)[0].get("data") or {}).get("AppearanceDetail") or []
+    names = {entry["Costume"] for entry in details if isinstance(entry, dict) and entry.get("Costume")}
+    return sorted(names - _AI_EXCLUDED_COSTUMES)
+
+
+def with_costume(record: dict[str, Any], costume: str) -> dict[str, Any]:
+    """同じキャラクターを、指定の衣装の項目で読み直す（ほかの衣装の項目と文面は落ちる）。"""
+    if costume not in costume_names(record):
+        raise CharacterLookupError(
+            f"{display_name(record)} に衣装 '{costume}' の設定がありません（選べる衣装: "
+            f"{', '.join(costume_names(record)) or 'なし'}）。")
+    raw, line = _raw_record(record)
+    return _usual_costume_only(raw, line, costume)
+
+
+def _usual_costume_only(record: dict[str, Any], raw_line: str = "", costume: str = _DEFAULT_COSTUME) -> dict[str, Any]:
+    """選んだ衣装（既定は usual）以外の衣装の記述と、AI に渡さない画像を外したレコードを返す。
+
+    AppearanceDetail の項目に加え、AIHints に写されたその項目の文面も落とす。AIHints は項目の
+    文面をそのまま、または ", " でつないで持つので、落とす項目だけが持つ文面で照合する。
+    """
+    if any(stem in raw_line for stem in _AI_EXCLUDED_IMAGE_STEMS):
+        record = dict(record)
+        for key in ("images", "preferred_reference_images", "ai_hints"):
+            if record.get(key):
+                record[key] = _drop_excluded_images(record[key])
+
+    data = record.get("data")
+    details = data.get("AppearanceDetail") if isinstance(data, dict) else None
+    entries = [e for e in details or [] if isinstance(e, dict)]
+
+    def gone(entry: dict[str, Any]) -> bool:
+        return bool(entry.get("Costume")) and entry["Costume"] != costume
+
+    if not any(gone(e) for e in entries):
+        return record
+    kept = set().union(*(_entry_texts(e) for e in entries if not gone(e)))
+    texts = sorted(set().union(*(_entry_texts(e) for e in entries if gone(e))) - kept, key=len, reverse=True)
+    alternatives = "|".join(re.escape(text) for text in texts)
+    listed = re.compile(rf"(?:^|[,:] )(?:{alternatives})(?:$|, |\))") if texts else None
+
+    def scrub(node: Any) -> Any:
+        if isinstance(node, dict):
+            # つないだ文（prompt_export 等）は、部分的に削ると残骸が出るので空にする。要約には使っていない。
+            return {key: "" if isinstance(value, str) and any(text in value for text in texts) else scrub(value)
+                    for key, value in node.items()}
+        if isinstance(node, list):
+            return [scrub(item) for item in node
+                    if not (listed and isinstance(item, str) and listed.search(item))]
+        return node
+
+    data = dict(data, AppearanceDetail=[e for e in data["AppearanceDetail"]
+                                        if not (isinstance(e, dict) and gone(e))])
+    if data.get("AIHints"):
+        data["AIHints"] = scrub(data["AIHints"])
+    record = dict(record, data=data)
+    if record.get("ai_hints"):
+        record["ai_hints"] = scrub(record["ai_hints"])
+    return record
 
 
 def is_character(record: dict[str, Any]) -> bool:
@@ -285,26 +397,49 @@ def resolve_form(record: dict[str, Any], requested: str | None) -> str | None:
     return None
 
 
-def resolve_height_cm(record: dict[str, Any]) -> tuple[float | None, str]:
-    """``Height_cm`` を (値, 補足) で返す。複数値は先頭の数値を採り、補足に条件を残す。"""
+def resolve_height_cm(record: dict[str, Any], state: str = "") -> tuple[float | None, str]:
+    """``Height_cm`` を (値, 補足) で返す。複数値は、状態の指定に条件の語が出てくる値、無ければ先頭の値を採る。"""
     raw = (record.get("data") or {}).get("Height_cm")
     if isinstance(raw, (int, float)):
         return float(raw), ""
     if isinstance(raw, list):
-        for entry in raw:
-            if isinstance(entry, dict) and isinstance(entry.get("value"), (int, float)):
-                return float(entry["value"]), str(entry.get("about_JP") or "")
+        entries = [e for e in raw if isinstance(e, dict) and isinstance(e.get("value"), (int, float))]
+        wanted = state.casefold()
+        named = [e for e in entries if any(
+            (word := str(e.get(key) or "").removesuffix("時").strip().casefold()) and word in wanted
+            for key in ("about_JP", "about_EN"))]
+        for entry in named or entries:
+            return float(entry["value"]), str(entry.get("about_JP") or "")
     return None, ""
 
 
 # FORMS 以外の Formation は作品内の状態（豹変系女子の豹変前後など）。既定で描く状態だけを通常の項目にする。
-# shortcut: 既定の状態は豹変系女子の beforeChange だけ。他作品が状態別の外見を持ったらここへ足す。
-_DEFAULT_STATES = ("beforeChange",)
+# 既定で描くのは、豹変系女子の beforeChange（豹変前）と獣爾騎兵の normal（獣化前）。
+# shortcut: 既定の状態は作品ごとの語を並べただけ。他作品が状態別の外見を持ったらここへ足す。
+_DEFAULT_STATES = ("beforeChange", "normal")
 
 
-def _drawn_by_default(state: Any, form: str | None) -> bool:
-    """その項目を今回の絵に描くか（共通・指定した形態・既定の状態）。"""
-    return state in (None, form, *_DEFAULT_STATES)
+def _drawn_by_default(state: Any, form: str | None, drawn: tuple[str, ...] = _DEFAULT_STATES) -> bool:
+    """その項目を今回の絵に描くか（共通・指定した形態・描く状態。描く状態の既定は ``_DEFAULT_STATES``）。"""
+    return state in (None, form, *drawn)
+
+
+def state_names(record: dict[str, Any]) -> list[str]:
+    """DB に項目があって名前で選べる状態（豹変系女子の afterChanged、獣爾騎兵の beasted など）。"""
+    details = (record.get("data") or {}).get("AppearanceDetail") or []
+    return sorted({entry["Formation"] for entry in details
+                   if isinstance(entry, dict) and entry.get("Formation") and entry["Formation"] not in FORMS})
+
+
+def _detachable_lines(data: dict[str, Any], form: str | None, drawn: tuple[str, ...]) -> list[str]:
+    """着脱できる印（``Detachable``）の付いた、今回描く着用物。状態の指定で外せるのはこれだけ。"""
+    lines: list[str] = []
+    for entry in data.get("AppearanceDetail") or []:
+        if (isinstance(entry, dict) and entry.get("Detachable")
+                and _drawn_by_default(entry.get("Formation"), form, drawn)):
+            texts = [_attr_text(attr) for attr in entry.get("Attrs") or [] if isinstance(attr, dict)]
+            lines += [text for text in texts if text][:1]
+    return lines
 
 
 def _attr_text(attr: dict[str, Any]) -> str:
@@ -318,7 +453,8 @@ def _attr_text(attr: dict[str, Any]) -> str:
     return f"{value} ({about})" if value and about else str(value or about or "")
 
 
-def _appearance_lines(data: dict[str, Any], form: str | None) -> list[str]:
+def _appearance_lines(data: dict[str, Any], form: str | None,
+                      drawn: tuple[str, ...] = _DEFAULT_STATES) -> list[str]:
     lines: list[str] = []
     for entry in data.get("AppearanceDetail") or []:
         if not isinstance(entry, dict):
@@ -336,19 +472,20 @@ def _appearance_lines(data: dict[str, Any], form: str | None) -> list[str]:
         head = " / ".join(part for part in (where, side, _tail(entry.get("DesignElement"))) if part)
         note = entry.get("Note_EN") or entry.get("Note_JP")
         line = f"{head}: {'; '.join(attrs)}" + (f" ({note})" if note else "")
-        if not _drawn_by_default(state, form):
+        if not _drawn_by_default(state, form, drawn):
             # 設定画には別状態も描かれている。捨てると観察・検査が通常の姿の特徴と取り違える。
             line = f"[別状態 {state} だけの特徴。今回の絵には描かない] {line}"
         lines.append(line)
     return lines
 
 
-def _appearance_tail_count(data: dict[str, Any], form: str | None) -> int:
+def _appearance_tail_count(data: dict[str, Any], form: str | None,
+                           drawn: tuple[str, ...] = _DEFAULT_STATES) -> int:
     """尾の項目に書かれた本数の合計。TailsUnit は NumberTales だけが持ち、他作品は本数をここに書く。"""
     return sum(
         attr["value_Num"]
         for entry in data.get("AppearanceDetail") or []
-        if isinstance(entry, dict) and _drawn_by_default(entry.get("Formation"), form)
+        if isinstance(entry, dict) and _drawn_by_default(entry.get("Formation"), form, drawn)
         and "#BodyPart_Tail" in (entry.get("BodyPart") or [])
         for attr in entry.get("Attrs") or []
         if isinstance(attr, dict) and attr.get("AttrLabel") == "#DesignAttr_Count"
@@ -373,12 +510,13 @@ def _tail_lines(data: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _palette_lines(data: dict[str, Any], form: str | None) -> list[str]:
+def _palette_lines(data: dict[str, Any], form: str | None,
+                   drawn: tuple[str, ...] = _DEFAULT_STATES) -> list[str]:
     lines: list[str] = []
     for color in data.get("ColorPalette") or []:
         if not isinstance(color, dict) or not color.get("Hex"):
             continue
-        if color.get("Formation") not in (None, form):
+        if not _drawn_by_default(color.get("Formation"), form, drawn):
             continue
         parts = ", ".join(_tail(part).lower() for part in color.get("AppliesTo") or [])
         label = color.get("ColorName_JP") or _tail(color.get("Role"))
@@ -388,15 +526,29 @@ def _palette_lines(data: dict[str, Any], form: str | None) -> list[str]:
     return lines
 
 
-def summarize_character(record: dict[str, Any], form: str | None = None) -> dict[str, Any]:
-    """プロンプトと run_meta に使う要約を作る。manifest に書かれた内容だけを載せる。"""
+def summarize_character(record: dict[str, Any], form: str | None = None, *,
+                        state: str = "", costume: str = "") -> dict[str, Any]:
+    """プロンプトと run_meta に使う要約を作る。manifest に書かれた内容だけを載せる。
+
+    ``state`` と ``costume`` は、DB にある名前（``state_names`` / ``costume_names``）ならその項目を選ぶ。
+    名前に当たらない文は、体型と衣装・着用物だけを変える自由な指定として ``*_note`` に残す。
+    """
+    state, costume = " ".join(state.split()), " ".join(costume.split())
+    states, costumes = state_names(record), costume_names(record) if record.get("_type") else []
+    named_state = state if state in states else ""
+    named_costume = costume if costume in costumes else ""
+    if costume in _AI_EXCLUDED_COSTUMES:
+        raise CharacterLookupError(f"衣装 '{costume}' は、AI 向けの利用から外しているため選べません。")
+    if named_costume and named_costume != _DEFAULT_COSTUME:
+        record = with_costume(record, named_costume)
+    drawn = (named_state,) if named_state else _DEFAULT_STATES
     data = record.get("data") or {}
     hints = record.get("ai_hints") or {}
     common = hints.get("common") or {}
     resolved_form = resolve_form(record, form)
     form_hints = (hints.get("forms") or {}).get(resolved_form) or {}
     notes = form_hints.get("silhouette_notes") or {}
-    height_cm, height_note = resolve_height_cm(record)
+    height_cm, height_note = resolve_height_cm(record, state)
     # 構造再同期後も手書きの旧説明は残るため、再同期されたタグを優先する。
     form_tags = _strings(form_hints.get("ai_tags"))
     negative_keywords = _strings(form_hints.get("negative_keywords")) + _strings(form_hints.get("negative_visuals"))
@@ -424,13 +576,16 @@ def summarize_character(record: dict[str, Any], form: str | None = None) -> dict
         "immutable_constraints": _strings(common.get("immutable_traits"))
         + _strings(form_hints.get("immutable_constraints")),
         "negative_keywords": negative_keywords,
-        "appearance_details": _appearance_lines(data, resolved_form),
+        "appearance_details": _appearance_lines(data, resolved_form, drawn),
         "tails": _tail_lines(data),
         "tail_count": sum(unit["Count"] for unit in data.get("TailsUnit") or []
                           if isinstance(unit, dict) and isinstance(unit.get("Count"), int))
-        or _appearance_tail_count(data, resolved_form) or None,
-        "palette": _palette_lines(data, resolved_form),
+        or _appearance_tail_count(data, resolved_form, drawn) or None,
+        "palette": _palette_lines(data, resolved_form, drawn),
         "has_text_design": bool(hints) or bool(data.get("AppearanceDetail")),
+        "state": named_state, "state_note": "" if named_state else state, "states": states,
+        "costume": named_costume, "costume_note": "" if named_costume else costume, "costumes": costumes,
+        "detachable": _detachable_lines(data, resolved_form, drawn),
     }
 
 

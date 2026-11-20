@@ -15,6 +15,14 @@
 数えさせ、設定との照合はコードで行う。設定の本数を先に見せると、Vision はその数に合わせて
 答えてしまう（2026-11-18 の実行で、尾が 5〜6 本の絵にも「8 本」と答えた）。数え方には
 1〜2 本の誤差があるので、指摘は「全部の先端が見えるように描く」という修正の依頼にとどまる。
+
+物品化（``--object``）では、形状の指定の代わりに「名前（と参考画像）のとおりの物として読めるか、人の体の輪郭が
+残りすぎていないか」を ``shape_issues`` に、配色・模様と顔の扱いの食い違いを ``violations`` に挙げさせる。
+尾の本数の照合は、耳と尾の形を保つ指定（``keep``）のときだけ行い、体数は数えない。
+
+依頼者の入力画像のうち、検査と修正に渡すのは赤入れ（``markup``）と、物品化の変形先の参考（``object``）だけ。赤入れがあれば、印の場所が
+直っているか、印や指示の文字がラフに残っていないかも検査する。プロンプトは、その呼び出しで添付する
+参照の並びに合わせて ``compose`` で組み直す（参照の番号と役割をずらさないため）。
 """
 
 from __future__ import annotations
@@ -23,11 +31,16 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from ..shape import objects
 from ..shape.modes import appendage_text, limb_text
 from ..utils.provider import GenerationResult, ProviderError
 from .design_reference import Vision, observation_block
+from .input_images import for_stage
+from .prompt_builder import state_lines
 
 Generator = Callable[..., GenerationResult]
+#: 添付する参照の並びから、作画指定のプロンプトを組む関数。
+Compose = Callable[[list[dict[str, Any]]], str]
 
 SEVERE_THRESHOLD = 3
 _ISSUE_KEYS = ("shape_issues", "violations", "missing", "composition_issues")
@@ -38,8 +51,68 @@ _LAYOUT_NOTE = {
 }
 
 
+def _identity_lines(character: dict[str, Any]) -> list[str]:
+    identity = [f"- {line}" for line in character["appearance_details"]]
+    identity += [f"- 尾の構造: {line}" for line in character["tails"]]
+    if character["palette"]:
+        identity.append(f"- 配色: {' / '.join(character['palette'])}")
+    if not identity:
+        identity.append("- 文字の設定資料が少ないキャラクター。公式画像と下の観察を基準にする。")
+    return identity
+
+
+def _object_inspection_prompt(character: dict[str, Any], spec: dict[str, Any], design: dict[str, Any],
+                              has_official: bool, has_markup: bool, has_object_image: bool) -> str:
+    """物品化のラフの検査。寸法は無いので、物として読めるかと、表面へ移した手がかりを見る。"""
+    name, face = spec["name_ja"], spec["face"]["mode"]
+    target = [
+        f"- 物: {name}",
+        "- 配色と模様: 髪・肌・衣装の色と柄を、物の表面の配色と模様に移す。番号や紋章は物の表面に描く。",
+        f"- 顔: {objects.face_text(spec)[0]}",
+        f"- 腕: {objects.limb_text(spec, 'arms')[0]}",
+        f"- 脚: {objects.limb_text(spec, 'legs')[0]}",
+        f"- 耳と尾: {objects.appendage_text(spec)[0]}",
+    ]
+    face_rule = ("顔が無い、顔立ちや瞳の色が公式画像と違う場合は「顔: 〜」" if face == "keep"
+                 else "顔が描かれていれば「顔: 描かない指定」")
+    parts = [
+        f"あなたはイラストの検査係です。1 枚目の画像は、{character['name_ja']} が"
+        f"「{name}」という物になった姿（物品化）として生成されたラフです。{_LAYOUT_NOTE['single']}",
+        "[変形先の物の指定]\n" + "\n".join(target),
+        "[キャラクターの識別特徴（物の表面へ移す手がかり）]\n" + "\n".join(_identity_lines(character)),
+        "\n".join(state_lines(character) + ["- この指定で変えた体型と衣装は、公式画像と違っていても violations や missing に入れない。"]
+                  if state_lines(character) else []),
+        observation_block(design),
+        "[検査のしかた]\n"
+        f"- shape_issues: 「{name}」として一目で読めない"
+        + ("、変形先の参考の画像と形や構造が大きく違う" if has_object_image else "")
+        + "、人の体の輪郭（頭・胴・肩・腰の形）が残りすぎている、腕・脚・耳・尾の扱いが指定と違う場合に入れる。\n"
+        "- violations: 物の表面の配色や模様が、キャラクターの髪・肌・衣装の色と柄から取られていなければ「配色: 〜」、"
+        f"{face_rule}、設定に無い装飾の描き足しは「蛇足: 〜」、説明文・ラベル・透かしは「文字: 〜」として入れる。"
+        + ("変形先の参考の画像にあるロゴ・文字・キャラクターの柄や配色が写っていれば「写し込み: 〜」として入れる。"
+           if has_object_image else "") + "\n"
+        "- missing: 番号や紋章が物の表面に無い、位置や字形が違う場合と、耳や尾の種類・本数が設定と違う場合に"
+        "「〜: 設定ではどうか」の形で入れる。\n"
+        "- composition_issues: 見切れ、物が 2 つ以上描かれている、破綻した描写を入れる。\n"
+        "- 指定どおりの変化（体が物の形になる、衣装が色と柄として表面に移る、手足の収納）は問題にしない。"
+        "物の素材感（ビニール、布、陶器、木など）、陰影による濃淡、角度の違いも問題にしない。"
+        + ("\n- 公式画像は、キャラクターの外見（配色・模様・顔立ち）の照合に使う。" if has_official else "")
+        + ("\n- 「変形先の参考」の画像は、物の形・構造・素材感の照合にだけ使う。キャラクターの外見の基準ではない。"
+           if has_object_image else "")
+        + ("\n- 「赤入れ」の画像は公式画像ではなく、加筆の起点の絵に赤い印で修正の指示を描き込んだもの。"
+           "印が指す場所が指示のとおりに直っていなければ「赤入れ未反映: 〜」、赤い印や指示の文字がラフに"
+           "残っていれば「赤入れの印: 〜」として composition_issues に入れる。" if has_markup else ""),
+        "次の JSON だけを返してください（各配列は日本語の短い文。問題が無ければ空配列）:\n"
+        '{"shape_issues": [], "violations": [], "missing": [], "composition_issues": []}',
+    ]
+    return "\n\n".join(part for part in parts if part)
+
+
 def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: str, amount: float,
-                       design: dict[str, Any], has_official: bool) -> str:
+                       design: dict[str, Any], has_official: bool, has_markup: bool = False,
+                       has_object_image: bool = False) -> str:
+    if objects.is_object(spec):
+        return _object_inspection_prompt(character, spec, design, has_official, has_markup, has_object_image)
     dims = spec["dimensions"]
     size = (
         f"幅 {dims['width']:g} × 高さ {dims['height']:g} × 奥行き {dims['depth']:g}"
@@ -58,18 +131,15 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
     if amount < 1.0:
         shape.append(f"- この絵は変形の途中（変形量 約 {round(amount * 100)}%）: {spec['midway_ja']}")
 
-    identity = [f"- {line}" for line in character["appearance_details"]]
-    identity += [f"- 尾の構造: {line}" for line in character["tails"]]
-    if character["palette"]:
-        identity.append(f"- 配色: {' / '.join(character['palette'])}")
-    if not identity:
-        identity.append("- 文字の設定資料が少ないキャラクター。公式画像と下の観察を基準にする。")
+    identity = _identity_lines(character)
 
     parts = [
         f"あなたはイラストの検査係です。1 枚目の画像は、{character['name_ja']} が"
         f"「{spec['name_ja']}」へ形状変化した姿として生成されたラフです。{_LAYOUT_NOTE[layout]}",
         "[形状の指定]\n" + "\n".join(shape),
         "[キャラクターの識別特徴]\n" + "\n".join(identity),
+        "\n".join(state_lines(character) + ["- この指定で変えた体型と衣装は、公式画像と違っていても violations や missing に入れない。"]
+                  if state_lines(character) else []),
         observation_block(design),
         "[検査のしかた]\n"
         "- shape_issues: 輪郭が指定の形状でない、縦横比や厚みが大きく違う、顔の位置が違う、"
@@ -82,7 +152,10 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
         "- composition_issues: 見切れ、体数の誤り、破綻した描写を入れる。\n"
         "- 指定どおりの変形（顔の拡大、衣装が面に沿う、手足の収納）は問題にしない。"
         "陰影による濃淡、ポーズや角度の違いも問題にしない。"
-        + ("\n- 2 枚目以降は公式画像。キャラクターの外見はこれと照合する。" if has_official else ""),
+        + ("\n- 2 枚目以降は公式画像。キャラクターの外見はこれと照合する。" if has_official else "")
+        + ("\n- 最後の 1 枚（赤入れ）は公式画像ではなく、加筆の起点の絵に赤い印で修正の指示を描き込んだもの。"
+           "印が指す場所が指示のとおりに直っていなければ「赤入れ未反映: 〜」、赤い印や指示の文字がラフに"
+           "残っていれば「赤入れの印: 〜」として composition_issues に入れる。" if has_markup else ""),
         "次の JSON だけを返してください（各配列は日本語の短い文。問題が無ければ空配列）:\n"
         '{"shape_issues": [], "violations": [], "missing": [], "composition_issues": []}',
     ]
@@ -107,21 +180,33 @@ def _measure(image: Path, vision: Vision) -> dict[str, Any]:
         return {}
 
 
-def _measured_issues(measured: dict[str, Any], character: dict[str, Any], result: dict[str, list[str]]) -> None:
-    """数えさせた値を設定と照合し、食い違いを指摘に加える（1 体だけを描く絵が対象）。"""
+def _measured_issues(measured: dict[str, Any], character: dict[str, Any], result: dict[str, list[str]],
+                     spec: dict[str, Any] | None = None) -> None:
+    """数えさせた値を設定と照合し、食い違いを指摘に加える（1 体だけを描く絵が対象）。
+
+    物品化では、耳と尾の形を保つ指定のときだけ尾を照合し、体数は照合しない（顔の無い物は 0 体と数えられる）。
+    """
+    is_object = bool(spec) and objects.is_object(spec)
     tails, expected = measured.get("tail_tips_visible"), character.get("tail_count")
+    if is_object and spec["appendages"] != "keep":
+        expected = None
     if isinstance(tails, int) and expected and tails != expected:
         result["missing"].append(
             f"尾: 先端が見えているのは {tails} 本。設定は {expected} 本なので、{expected} 本すべての先端が見えるように描く")
     figures = measured.get("figure_count")
-    if isinstance(figures, int) and figures != 1:
+    if isinstance(figures, int) and figures != 1 and not is_object:
         result["composition_issues"].append(f"体数: {figures} 体描かれている。1 体だけを描く")
 
 
 def inspect_rough(image: Path, prompt: str, official: list[dict[str, Any]], vision: Vision,
-                  character: dict[str, Any], layout: str) -> dict[str, Any]:
-    """1 枚を検査する。Vision が失敗したら ``skipped`` を立てて返す。"""
+                  character: dict[str, Any], layout: str, markup: dict[str, Any] | None = None,
+                  spec: dict[str, Any] | None = None, target: dict[str, Any] | None = None) -> dict[str, Any]:
+    """1 枚を検査する。Vision が失敗したら ``skipped`` を立てて返す。``target`` は物品化の変形先の参考。"""
     images = [("検査対象のラフ", image)] + [(f"公式画像: {ref['role']}", ref["path"]) for ref in official[:2]]
+    if target:
+        images.append(("変形先の参考（物の形と素材感。キャラクターの外見の基準ではない）", target["path"]))
+    if markup:
+        images.append(("赤入れ（加筆の起点への指示書き。公式画像ではない）", markup["path"]))
     try:
         raw = vision(prompt, images)
     except ProviderError as err:
@@ -131,7 +216,7 @@ def inspect_rough(image: Path, prompt: str, official: list[dict[str, Any]], visi
         for key in _ISSUE_KEYS
     }
     measured = _measure(image, vision) if layout == "single" else {}
-    _measured_issues(measured, character, result)
+    _measured_issues(measured, character, result, spec)
     result["measurements"] = measured
     result["overall_ok"] = not any(result[key] for key in _ISSUE_KEYS)
     result["skipped"] = False
@@ -147,7 +232,7 @@ def _issue_lines(analysis: dict[str, Any]) -> tuple[list[str], list[str]]:
 def correct_roughs(
     roughs: list[Path],
     *,
-    prompt: str,
+    compose: Compose,
     character: dict[str, Any],
     spec: dict[str, Any],
     layout: str,
@@ -159,10 +244,17 @@ def correct_roughs(
     generator: Generator,
     vision: Vision,
 ) -> dict[str, Any]:
-    """``{"passed", "corrected", "all", "log"}`` を返す。``all`` は問題の少なかった順。"""
+    """``{"passed", "corrected", "all", "log"}`` を返す。``all`` は問題の少なかった順。
+
+    ``references`` は Stage 3 でラフに添付した参照。作り直しには同じものを、ラフを起点にした修正には
+    Stage 4 へ渡す役割の参照（公式画像、赤入れ、物品化の変形先の参考）だけを添付する。
+    """
     stage_dir.mkdir(parents=True, exist_ok=True)
     official = [ref for ref in references if ref.get("official")]
-    inspection = _inspection_prompt(character, spec, layout, amount, design, bool(official))
+    markup = next((ref for ref in references if ref.get("kind") == "markup"), None)
+    target = next((ref for ref in references if ref.get("kind") == "object"), None)
+    inspection = _inspection_prompt(character, spec, layout, amount, design, bool(official), bool(markup),
+                                    bool(target))
     (stage_dir / "inspection_prompt.txt").write_text(inspection, encoding="utf-8")
 
     passed: list[Path] = []
@@ -170,7 +262,7 @@ def correct_roughs(
     ranked: list[tuple[int, Path]] = []
     log: list[dict[str, Any]] = []
     for index, rough in enumerate(roughs, start=1):
-        analysis = inspect_rough(rough, inspection, official, vision, character, layout)
+        analysis = inspect_rough(rough, inspection, official, vision, character, layout, markup, spec, target)
         fix, must = _issue_lines(analysis)
         issue_count = len(fix) + len(must)
         entry: dict[str, Any] = {"rough_index": index, "file": rough.name, **analysis, "action": "passed"}
@@ -188,13 +280,14 @@ def correct_roughs(
                 action, stem = "regenerated", f"rough_{index:02d}_regen"
                 refs = references
                 text = ("[前回のラフで見つかった問題]\n" + "\n".join(notes)
-                        + "\n上の問題を解消して、最初から描き直してください。\n\n" + prompt)
+                        + "\n上の問題を解消して、最初から描き直してください。\n\n" + compose(refs))
             else:
                 action, stem = "corrected", f"rough_{index:02d}_corrected"
-                refs = [{"path": rough, "rel": rough.name, "role": "修正対象のラフ", "official": False}, *references]
+                refs = [{"path": rough, "rel": rough.name, "role": "修正対象のラフ", "official": False},
+                        *for_stage(references, 4)]
                 text = ("[修正の依頼]\n参照1 は修正対象のラフです。構図・画風・問題の無い部分はそのまま保ち、"
                         "次の点だけを最小限の変更で直してください。\n" + "\n".join(notes)
-                        + "\n\n以下は元の作画指定です。\n\n" + prompt)
+                        + "\n\n以下は元の作画指定です。\n\n" + compose(refs))
             try:
                 made = generator(text, references=refs, out_dir=stage_dir, stem=stem, aspect=aspect, count=1)
                 result_path = made.files[0]
