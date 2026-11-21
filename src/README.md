@@ -338,7 +338,7 @@ python -m src.shape.vm_bundle outputs/vm-shape-data
 | `utils/dataset.py` | manifest の読み込み、AI 利用ゲート、キャラクター検索、参照画像の選定 |
 | `gemini/generate.py` / `openai/generate.py` / `openai/vision.py` / `canva/generate.py` | 外部 API の呼び出し |
 | `tools/refresh_canva_token.py` | Canva の連携のトークンの取得・更新と、Secret Manager への登録 |
-| `mcp_server/` | MCP サーバー。`tools.py` が中身、`server.py` が MCP への登録。`jobs.py` / `auth.py` / `output_sink.py` は GeneratorsAI から移したもの |
+| `mcp_server/` | MCP サーバー。`tools.py` が中身、`server.py` が MCP への登録。`jobs.py` / `auth.py` / `output_sink.py` は GeneratorsAI から移したもの。`state_store.py` は、サインインの状態とジョブの記録を GCS にも置いて、インスタンスが入れ替わっても残す |
 | `utils/run_log.py` / `utils/paths.py` / `utils/image_io.py` / `utils/provider.py` | 記録・実行フォルダー・画像の保存・共通の型 |
 
 ## テスト
