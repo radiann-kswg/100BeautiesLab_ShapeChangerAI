@@ -31,6 +31,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from ..shape import cues as cue_rules
 from ..shape import objects
 from ..shape.modes import appendage_text, limb_text
 from ..utils.provider import GenerationResult, ProviderError
@@ -61,6 +62,36 @@ def _identity_lines(character: dict[str, Any]) -> list[str]:
     return identity
 
 
+def _layout_note(spec: dict[str, Any], layout: str) -> str:
+    if cue_rules.is_scene(spec):
+        return "1 体を、場面の中に溶け込ませて描いた絵。場面の物と重なったり、同じ種類の物が周りにあったりしてよい。"
+    return _LAYOUT_NOTE[layout]
+
+
+def _cue_lines(spec: dict[str, Any]) -> str:
+    """検査に渡す、見分ける手がかり・番号の扱い・場面に溶け込む構図での許容範囲。"""
+    lines = [
+        "[見分ける手がかり]",
+        f"- {cue_rules.names(spec)}",
+        "- 手がかりが見えない、ほかの物に隠れている、崩れて読めない場合は、missing に「手がかり: 〜」として入れる。",
+    ]
+    if cue_rules.has(spec, "number"):
+        lines.append("- 番号・紋章は、読める位置に、設定の字形で描かれていること。無ければ missing に入れる。")
+    else:
+        lines.append("- 番号・紋章は、設定の位置・大きさ・個数のままでよい。設定で服や髪の陰に隠れている番号が見えないことは、"
+                     "missing に入れない。設定より大きい、設定に無い目立つ場所へ移っている場合は、violations に「番号: 〜」として入れる。")
+    if cue_rules.is_scene(spec):
+        lines += [
+            "[構図: 場面に溶け込む]",
+            "- 場面の物と重なる、間に挟まる、一部が隠れるのは指定どおり。輪郭の 3 分の 1 くらいまで隠れていても、"
+            "見切れや重なりとして composition_issues に入れない。それ以上隠れて形が読めなければ shape_issues に入れる。",
+            "- 手がかり（配色・顔・番号など）が、場面のほかの物にも描かれていれば、violations に「取り違え: 〜」として入れる。",
+            "- 床の接地影が無いこと、場面の物との大きさの関係は問題にしない。寸法は形の縦横比と厚みとして読む。",
+            "- 手がかりに選んでいない特徴（尾の本数など）が、場面の物に隠れて確認できないことは、missing に入れない。",
+        ]
+    return "\n".join(lines)
+
+
 def _object_inspection_prompt(character: dict[str, Any], spec: dict[str, Any], design: dict[str, Any],
                               has_official: bool, has_markup: bool, has_object_image: bool) -> str:
     """物品化のラフの検査。寸法は無いので、物として読めるかと、表面へ移した手がかりを見る。"""
@@ -77,9 +108,10 @@ def _object_inspection_prompt(character: dict[str, Any], spec: dict[str, Any], d
                  else "顔が描かれていれば「顔: 描かない指定」")
     parts = [
         f"あなたはイラストの検査係です。1 枚目の画像は、{character['name_ja']} が"
-        f"「{name}」という物になった姿（物品化）として生成されたラフです。{_LAYOUT_NOTE['single']}",
+        f"「{name}」という物になった姿（物品化）として生成されたラフです。{_layout_note(spec, 'single')}",
         "[変形先の物の指定]\n" + "\n".join(target),
         "[キャラクターの識別特徴（物の表面へ移す手がかり）]\n" + "\n".join(_identity_lines(character)),
+        _cue_lines(spec),
         "\n".join(state_lines(character) + ["- この指定で変えた体型と衣装は、公式画像と違っていても violations や missing に入れない。"]
                   if state_lines(character) else []),
         observation_block(design),
@@ -91,7 +123,9 @@ def _object_inspection_prompt(character: dict[str, Any], spec: dict[str, Any], d
         f"{face_rule}、設定に無い装飾の描き足しは「蛇足: 〜」、説明文・ラベル・透かしは「文字: 〜」として入れる。"
         + ("変形先の参考の画像にあるロゴ・文字・キャラクターの柄や配色が写っていれば「写し込み: 〜」として入れる。"
            if has_object_image else "") + "\n"
-        "- missing: 番号や紋章が物の表面に無い、位置や字形が違う場合と、耳や尾の種類・本数が設定と違う場合に"
+        "- missing: "
+        + ("番号や紋章が物の表面に無い、位置や字形が違う場合と、" if cue_rules.has(spec, "number") else "")
+        + "耳や尾の種類・本数が設定と違う場合に"
         "「〜: 設定ではどうか」の形で入れる。同じ番号や紋章が 2 か所以上に描かれていれば「重複: 〜」として入れる。\n"
         "- composition_issues: 見切れ、物が 2 つ以上描かれている、破綻した描写を入れる。\n"
         "- 指定どおりの変化（体が物の形になる、衣装が色と柄として表面に移る、手足の収納）は問題にしない。"
@@ -135,9 +169,10 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
 
     parts = [
         f"あなたはイラストの検査係です。1 枚目の画像は、{character['name_ja']} が"
-        f"「{spec['name_ja']}」へ形状変化した姿として生成されたラフです。{_LAYOUT_NOTE[layout]}",
+        f"「{spec['name_ja']}」へ形状変化した姿として生成されたラフです。{_layout_note(spec, layout)}",
         "[形状の指定]\n" + "\n".join(shape),
         "[キャラクターの識別特徴]\n" + "\n".join(identity),
+        _cue_lines(spec),
         "\n".join(state_lines(character) + ["- この指定で変えた体型と衣装は、公式画像と違っていても violations や missing に入れない。"]
                   if state_lines(character) else []),
         observation_block(design),
@@ -215,16 +250,21 @@ def _measured_issues(measured: dict[str, Any], character: dict[str, Any], result
     """数えさせた値を設定と照合し、食い違いを指摘に加える（1 体だけを描く絵が対象）。
 
     物品化では、耳と尾の形を保つ指定のときだけ尾を照合し、体数は照合しない（顔の無い物は 0 体と数えられる）。
+    場面に溶け込む構図では、尾を手がかりに選んだときだけ尾を照合し（選ばなければ隠れてよい）、体数は照合しない
+    （周りの同じ種類の物まで数えられる）。
     """
     is_object = bool(spec) and objects.is_object(spec)
+    scene = bool(spec) and cue_rules.is_scene(spec)
     tails, expected = measured.get("tail_tips_visible"), character.get("tail_count")
     if is_object and spec["appendages"] != "keep":
+        expected = None
+    if scene and not cue_rules.has(spec, "tail"):
         expected = None
     if isinstance(tails, int) and expected and tails != expected:
         result["missing"].append(
             f"尾: 先端が見えているのは {tails} 本。設定は {expected} 本なので、{expected} 本すべての先端が見えるように描く")
     figures = measured.get("figure_count")
-    if isinstance(figures, int) and figures != 1 and not is_object:
+    if isinstance(figures, int) and figures != 1 and not is_object and not scene:
         result["composition_issues"].append(f"体数: {figures} 体描かれている。1 体だけを描く")
 
 

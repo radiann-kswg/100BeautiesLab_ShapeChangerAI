@@ -99,7 +99,7 @@ python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --dry-run \
 
 | 手がかり | 指定 | 既定 |
 | --- | --- | --- |
-| 配色と模様 | 髪・肌・衣装の色と柄を、物の表面へ移す。番号や紋章は、物の表面に描く | 必須（選べない） |
+| 配色と模様 | 髪・肌・衣装の色と柄を、物の表面へ移す。番号や紋章は、元の位置に当たる場所へ元の大きさのまま移す（手がかりに `number` を選ぶと、読める位置に描く。下の「構図と見分ける手がかり」） | 必須（選べない） |
 | 顔 | `--face keep`（物の表面に顔を 1 つ描く）/ `none`（描かない） | `keep` |
 | 腕と脚 | `--arms` / `--legs` の `keep`（物の外へ出す）/ `fold`（物の中へ収め、色だけが表面に見える）/ `hide`（描かない） | `fold` |
 | 耳と尾 | `--appendages` の `keep`（元の形と本数で外へ出す）/ `integrate`（表面の絵柄にする） | `keep` |
@@ -111,6 +111,41 @@ python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --dry-run \
 ```sh
 python -m src.pipeline.shape_pipeline --badge 57 --object "シャチ型の浮き輪" --dry-run
 python -m src.pipeline.shape_pipeline --badge 57 --object "花瓶" --face none --appendages integrate --dry-run
+```
+
+## 構図と見分ける手がかり
+
+構図は `--composition` で選ぶ（コネクタは `composition`）。対応するのは 1 体の生成だけで、`--joint` とは一緒に使えない。
+
+| 値 | 描き方 | 使える範囲 |
+| --- | --- | --- |
+| `showcase`（既定） | 形が分かるように見せる。床に置き、接地影を付ける。寸法は変形前の身長に対する実寸（cm）で渡す | すべてのレイアウト |
+| `scene` | `--scene` に書いた場面へ溶け込ませる。場面の物と重なる・挟まる・載る・浮かぶ。輪郭の 3 分の 1 くらいまでは隠れてよい | `--layout single`・変形完了だけ。`--scene` が必須 |
+
+- `scene` では、寸法を「形の縦横比と厚み」だけで渡す（cm は渡さない）。場面の物との大きさの関係は `--scene` の文で指定する（「トランプと同じ大きさ」など）。固定の「床に置く・接地影」は使わない。
+- 同じ種類の物が周りにある場面（カードの山など）では、周りの物をその物のふつうの柄で描き、キャラクターの配色・顔・番号を写さないように指示する。
+- 自然文の入口（`--natural`）は、「混ざっている」「埋もれている」「浮かんでいる」のような言い方から `scene` を読み取る。1 体・1 枚絵で、場面が読み取れたときだけ `scene` にする。
+
+見分ける手がかりは `--cues` で選ぶ（コネクタは `cues`。カンマ区切り）。「この絵で、どこを見ればその子だと分かるか」を、プロンプトと Stage 4 の検査の両方に同じ一覧で渡す。
+
+| 語 | 手がかり |
+| --- | --- |
+| `face` | 顔（顔立ちと瞳の色） |
+| `palette` | 配色（髪・肌・衣装の色と柄） |
+| `number` | 番号・紋章 |
+| `ears` / `tail` | 耳 / 尾（種類と本数） |
+| `hair` | 髪のモチーフ（髪型の特徴・髪飾り） |
+| `outfit` | 衣装の品目（目印になる服や小物） |
+
+- 省いたときの既定: `palette` と、顔を描く形なら `face`、耳と尾の形を保つ指定（`--appendages keep`）なら `ears` と `tail`。`number` は既定に入れない。
+- 番号と紋章: `number` を選んだときだけ、読める位置に設定の字形で描く。選ばないときは、設定の位置・大きさ・個数のまま扱い、設定で服や髪の陰に隠れている番号を目立つ場所へ移さない。検査も、隠れている番号が見えないことは指摘せず、設定より大きい・目立つ場所へ移っている場合を「番号: 〜」として挙げる。
+- `--cue-note` に、語で言えない手がかりを文で足せる（「前髪のハート」など）。
+- Stage 4 の検査: 選んだ手がかりが見えない・隠れている・崩れているときは「手がかり: 〜」。`scene` では、手がかりが場面のほかの物にも描かれていれば「取り違え: 〜」。`scene` の尾の本数は `tail` を選んだときだけ照合し、体数は照合しない（周りの同じ種類の物まで数えられるため）。
+- `run_meta.json` には、`composition` と、`subjects[].shape` の `composition`・`cues`・`cue_note` が残る。
+
+```sh
+python -m src.pipeline.shape_pipeline --badge 58 --mode 14 --composition scene --scene "机の上に崩れたトランプの山。その中の 1 枚として混ざっている。トランプと同じ大きさ" --dry-run
+python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --cues face,palette,number --cue-note "前髪のハート" --dry-run
 ```
 
 ## 使い方
@@ -167,6 +202,8 @@ PowerShell で `python` が Microsoft Store のエイリアスに当たって起
 | `--appendages` | 耳と尾を `keep`（形を保つ）/ `integrate`（形状へ統合）。形状 0〜8 と物品化で選べる |
 | `--size` | 形状全体の大きさ（0.2〜2） |
 | `--scene` / `--style` / `--extra` | 場面・画風・追加の作画指定 |
+| `--composition` | `showcase`（形を見せる。既定）/ `scene`（`--scene` の場面に溶け込ませる）。上の「構図と見分ける手がかり」 |
+| `--cues` / `--cue-note` | 見分ける手がかりの語（カンマ区切り）と、文での補足。1 体の生成だけ |
 | `--ref` | 追加の参照画像。`references/` か `outputs/` の中のファイルに限る |
 | `--images` | 役割を付けた入力画像（上の「入力画像」）。JSON の配列か、それを書いた `.json` ファイル |
 | `--no-refs` | 公式画像を添付しない（Stage 2 の観察もできなくなる） |
@@ -243,7 +280,7 @@ Claude Desktop などに登録する例（パスは環境に合わせる）:
 
 | ツール | 内容 |
 | --- | --- |
-| `shapechange_generate_character` / `shapechange_generate_joint` | 単体・合同の生成。ジョブを登録して `job_id` を返す。`images` で入力画像を渡せる。単体は、`mode` の代わりに `object`（と `face`）を渡すと物品化になる |
+| `shapechange_generate_character` / `shapechange_generate_joint` | 単体・合同の生成。ジョブを登録して `job_id` を返す。`images` で入力画像を渡せる。単体は、`mode` の代わりに `object`（と `face`）を渡すと物品化になる。単体は `composition`（`scene` で場面に溶け込ませる）と `cues`・`cue_note`（見分ける手がかり）も渡せる |
 | `shapechange_generate_from_natural` | 自然文の依頼から生成。読み取り結果は結果の `interpretation` に入る。入力画像は渡せない |
 | `shapechange_iterate` | 以前の実行と同じ指定で、その完成画像を起点に改稿する。変える点は `revisions` か赤入れの画像（`images` の `markup`）で伝える。`quick` は起点の画像の編集 1 回だけ |
 | `shapechange_create_upload_slot` | 入力画像 1 枚の受け取り口。署名付き PUT URL（15 分有効）と `object_key` を返す |
@@ -295,6 +332,7 @@ python -m src.shape.vm_bundle outputs/vm-shape-data
 | `pipeline/natural_parser.py` | 自然文の依頼の読み取り |
 | `shape/vrc_source.py` / `shape/modes.py` | シェーダーからの寸法の読み取り、形状仕様と体格の計算 |
 | `shape/objects.py` | 物品化の仕様（顔・腕と脚・耳と尾の扱い。寸法は持たない） |
+| `shape/cues.py` | 構図（`showcase` / `scene`）と、見分ける手がかりの語・既定 |
 | `shape/vm_bundle.py` | Cloud Run のイメージへ渡すシェーダー 2 ファイルの書き出し |
 | `utils/dataset.py` | manifest の読み込み、AI 利用ゲート、キャラクター検索、参照画像の選定 |
 | `gemini/generate.py` / `openai/generate.py` / `openai/vision.py` / `canva/generate.py` | 外部 API の呼び出し |

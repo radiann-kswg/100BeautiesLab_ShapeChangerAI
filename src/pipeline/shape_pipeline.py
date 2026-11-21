@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from ..shape import cues as cue_rules
 from ..shape.modes import APPENDAGE_CHOICES, LIMB_CHOICES, build_shape_spec
 from ..shape.objects import FACE_CHOICES, build_object_spec, is_object, shape_label
 from ..shape.vrc_source import MODE_COUNT, ShaderSource, ShapeSourceError, load_shader_source, shapechange_root
@@ -214,6 +215,13 @@ def build_parser() -> argparse.ArgumentParser:
     picture.add_argument("--layout", choices=LAYOUTS, default="single",
                          help="single: 1 体 / sequence: 変形前→途中→完了 / five-view: 五方向図")
     picture.add_argument("--scene", default="", help="場面・背景の指定")
+    picture.add_argument("--composition", choices=cue_rules.COMPOSITIONS, default="showcase",
+                         help="showcase: 形が分かるように見せる（既定）/ scene: --scene の場面に溶け込ませる"
+                              "（ほかの物と重なる・一部が隠れる。1 体・--layout single・変形完了だけ）")
+    picture.add_argument("--cues", default="", metavar="語,語",
+                         help="見分ける手がかり（" + " / ".join(cue_rules.CUES) + "）。カンマ区切り。既定は顔・配色と、"
+                              "形を保つ耳・尾。number を選んだときだけ、番号を読める位置に出す")
+    picture.add_argument("--cue-note", default="", help="手がかりの補足（例: 前髪のハート）")
     picture.add_argument("--style", default="", help="画風の指定（既定は参照画像に合わせる）")
     picture.add_argument("--extra", default="", help="追加の作画指定")
     picture.add_argument("--ref", action="append", default=[], metavar="PATH",
@@ -363,6 +371,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             parser.error("--joint では、状態を --states でキャラクターごとに指定してください（--costume は単体だけ）。")
         if args.object:
             parser.error("--object（物品化）は 1 体だけに対応しています。--joint と一緒には指定できません。")
+        if args.composition != "showcase" or args.cues or args.cue_note:
+            parser.error("--composition scene・--cues・--cue-note は、まだ 1 体の生成だけに対応しています。")
     elif args.states:
         parser.error("--states は --joint と組み合わせてください（単体は --state）。")
     elif args.object:
@@ -374,6 +384,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--mode か --object を指定してください（形状は --list-modes で一覧）。")
     if args.face and not args.object:
         parser.error("--face は --object（物品化）と組み合わせてください。")
+    if args.composition == "scene":
+        if args.layout != "single" or args.amount != 1.0:
+            parser.error("--composition scene は --layout single・変形完了だけに対応しています。")
+        if not args.scene.strip():
+            parser.error("--composition scene には --scene（溶け込ませる場面）が必要です。")
+    try:
+        args.cue_list = cue_rules.parse_cues(args.cues)
+    except ValueError as err:
+        parser.error(str(err))
     if not 0.0 < args.amount <= 1.0:
         parser.error("--amount は 0 より大きく 1 以下で指定してください。")
     if args.amount < 1.0 and args.layout != "single":
@@ -488,6 +507,7 @@ def build_plan(args: argparse.Namespace, argv: list[str] | None = None, *,
                     mode, source, height_cm=character["height_cm"], size=args.size,
                     arms=args.arms, legs=args.legs, appendages=args.appendages,
                 )
+            cue_rules.apply(spec, args.composition, getattr(args, "cue_list", None), args.cue_note)
             official = [] if args.no_refs else dataset.collect_reference_images(record, character["form"])
             if args.joint:       # 1 体ずつのラフは場面なしで描き、場面と入力画像は合同の清書で使う
                 references = official
@@ -528,6 +548,7 @@ def _subject_meta(subject: Subject) -> dict[str, Any]:
             "mode": spec["mode"], "key": spec["key"], "name_ja": spec["name_ja"], "size": spec["size"],
             "limbs": spec["limbs"], "appendages": spec["appendages"], "dimensions": spec["dimensions"],
             "dimensions_cm": spec["dimensions_cm"], "face": spec["face"], "before": spec["before"],
+            "composition": spec["composition"], "cues": spec["cues"], "cue_note": spec["cue_note"],
         },
         "reference_images": [{"path": ref["rel"], "role": ref["role"]} for ref in subject.references],
     }
@@ -567,6 +588,7 @@ def execute(
         "inspection_model": None if args.quick else vision_model,
         "subjects": [_subject_meta(subject) for subject in plan.subjects],
         "layout": args.layout,
+        "composition": args.composition,
         "amount": args.amount,
         "aspect": plan.aspect,
         "count": args.count,
@@ -746,12 +768,13 @@ def describe_plan(plan: Plan) -> dict[str, Any]:
         "message": "生成していません。内容を利用者に示し、承認を得てから dry_run なしで呼んでください。",
         "label": plan.label,
         "pipeline": "quick" if args.quick else "five-stage",
-        "provider": args.provider, "layout": args.layout, "aspect": plan.aspect,
+        "provider": args.provider, "layout": args.layout, "composition": args.composition, "aspect": plan.aspect,
         "retry_of": plan.retry_of, "iteration": plan.iteration or None, "revisions": plan.revisions,
         "max_generated_images": plan.max_generated_images,
         "warnings": _plan_warnings(plan),
         "subjects": [{"character": subject.character["name_ja"],
                       "shape": shape_label(subject.spec),
+                      "cues": subject.spec["cues"], "cue_note": subject.spec["cue_note"],
                       "state": subject.character["state"] or subject.character["state_note"] or "既定",
                       "costume": subject.character["costume"] or subject.character["costume_note"] or "usual",
                       "selectable_states": subject.character["states"],

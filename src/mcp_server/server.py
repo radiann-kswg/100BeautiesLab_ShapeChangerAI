@@ -131,6 +131,14 @@ class GenerateCharacterInput(_Common):
     costume: str = Field("", max_length=200, description="変形前の姿の衣装。shapechange_list_characters の costumes にある名前"
                                                          "（miko など）か、衣装を変える自由な文。省くと通常衣装")
     layout: Literal["single", "sequence", "five-view"] = "single"
+    composition: Literal["showcase", "scene"] = Field(
+        "showcase", description="構図。showcase: 形が分かるように見せる（既定）/ scene: scene に書いた場面へ溶け込ませる"
+                                "（場面の物と重なる・一部が隠れる・浮かぶなど。scene の指定が必須で、layout は single、変形完了だけ）")
+    cues: list[Literal["face", "palette", "number", "ears", "tail", "hair", "outfit"]] = Field(
+        default_factory=list, max_length=7,
+        description="見分ける手がかり（この絵で、どこを見ればその子だと分かるか）。省くと顔・配色と、形を保つ耳・尾。"
+                    "number を選んだときだけ番号を読める位置に出し、選ばなければ設定の位置と大きさのまま")
+    cue_note: str = Field("", max_length=120, description="手がかりの補足（例: 前髪のハート）")
     amount: float = Field(1.0, gt=0, le=1, description="変形量。1 未満は途中の姿（layout=single のみ）")
     size: float = Field(1.0, ge=0.2, le=2.0, description="形状全体の大きさ")
     arms: Optional[Limb] = None
@@ -146,6 +154,11 @@ class GenerateCharacterInput(_Common):
             raise ValueError("object（物品化）は layout: single・変形完了だけに対応しています（amount と size は既定のまま）。")
         if self.face and not self.object:
             raise ValueError("face は object（物品化）と一緒に指定してください。")
+        if self.composition == "scene":
+            if self.layout != "single" or self.amount != 1.0:
+                raise ValueError("composition: scene は layout: single・変形完了だけに対応しています。")
+            if not self.scene.strip():
+                raise ValueError("composition: scene には、溶け込ませる場面（scene）の指定が必要です。")
         return self
 
 

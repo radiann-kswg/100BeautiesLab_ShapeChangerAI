@@ -48,13 +48,15 @@ def _instruction(text: str) -> str:
         "無ければ書かれている名前。mode は形状番号。形状が 1 つしか書かれていなければ全員に同じ番号を入れる。\n"
         "- layout: 変化の過程・途中経過・ビフォーアフターを求めていれば sequence、"
         "五面図・設定画・複数方向からの図を求めていれば five-view、それ以外は single。\n"
+        "- composition: 変形した姿が場面の物に混ざる・埋もれる・紛れる・挟まる・浮かぶ・載るなど、場面に溶け込む絵を"
+        "求めていれば scene、それ以外は showcase。scene のときは、何にどう溶け込むかを scene に書く。\n"
         "- arms / legs: 手足を残す（keep）・しまう（fold）・消す（hide）の指定があれば入れ、無ければ null。\n"
         "- appendages: 耳や尻尾を形に溶け込ませる指定なら integrate、形を保つ指定なら keep、無ければ null。\n"
         "- scene: 場所や背景の指定。無ければ空文字。\n"
         "- extra: 上のどれにも入らない作画の指定。無ければ空文字。\n"
         "次の JSON だけを返してください:\n"
         '{"subjects": [{"character": "85", "mode": 0}], "layout": "single", "arms": null, "legs": null, '
-        '"appendages": null, "scene": "", "extra": ""}'
+        '"appendages": null, "composition": "showcase", "scene": "", "extra": ""}'
     )
 
 
@@ -95,12 +97,18 @@ def parse_request(text: str, ask: Ask | None = None, work_key: str | None = None
     for key in ("scene", "extra"):
         if isinstance(raw.get(key), str) and raw[key].strip():
             argv.append(f"--{key}={raw[key].strip()}")      # 値が -- で始まっても別の引数として読まれない
+    # 場面に溶け込む構図は、1 体・1 枚絵で、場面が書かれているときだけ
+    composition = ("scene" if raw.get("composition") == "scene" and len(subjects) == 1 and layout == "single"
+                   and isinstance(raw.get("scene"), str) and raw["scene"].strip() else "showcase")
+    if composition == "scene":
+        argv.append("--composition=scene")
     return {
         "argv": argv,
         "interpretation": {
             "subjects": [{"character": dataset.display_name(record), "badge": badge(record),
                           "mode": mode, "shape": modes[mode]["name_ja"]} for record, mode in subjects],
             "layout": layout if len(subjects) == 1 else "single",
+            "composition": composition,
             "note": "言葉から形状を読み替えました。違う形状にしたい場合は形状番号を指定してください。",
         },
     }

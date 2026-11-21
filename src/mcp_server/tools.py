@@ -41,6 +41,10 @@ def build_argv(params: dict[str, Any]) -> list[str]:
             argv += _option("states", ";".join(states) if any(states) else None)
             value = ",".join(f"{item['id']}:{item['mode']}" for item in value)
             key = "joint"
+        elif key == "cues":              # ["face", "number"] → --cues=face,number
+            value = ",".join(value) if value else None
+        elif key == "composition" and value == "showcase":
+            value = None                 # 既定は引数に出さない（以前の実行の記録と同じ形に保つ）
         elif key == "revisions" and isinstance(value, list):
             value = "; ".join(str(item) for item in value)
         elif key == "images":            # [{"object_key", "role", "note", "provenance"}, ...] → --images=<JSON>

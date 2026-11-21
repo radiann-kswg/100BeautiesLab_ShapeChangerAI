@@ -43,6 +43,7 @@ python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --dry-run
 python -m src.pipeline.shape_pipeline --badge 57 --mode 4            # 5 段階
 python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --quick    # 検査なしで 1 回だけ
 python -m src.pipeline.shape_pipeline --badge 57 --object "シャチ型の浮き輪" --dry-run   # 物品化（家具や道具へ）
+python -m src.pipeline.shape_pipeline --badge 58 --mode 14 --composition scene --scene "トランプの山に 1 枚として混ざっている" --dry-run   # 場面に溶け込む構図
 python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --images references/images.json --dry-run   # 入力画像つき
 python -m src.mcp_server                                             # コネクタ（MCP サーバー）
 ```
