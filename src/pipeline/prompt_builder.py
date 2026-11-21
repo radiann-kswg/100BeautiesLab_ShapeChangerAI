@@ -10,7 +10,7 @@ from typing import Any
 
 from ..shape import cues as cue_rules
 from ..shape import objects
-from ..shape.modes import appendage_text, limb_text
+from ..shape.modes import appendage_text, is_sheet, limb_text
 
 LAYOUTS = ("single", "sequence", "five-view")
 
@@ -198,6 +198,15 @@ def _shape_block(spec: dict[str, Any]) -> list[str]:
         f"- 面と衣装: {spec['surface_ja']}",
         f"  {spec['surface_en']}",
     ]
+    if is_sheet(spec):
+        # 2026-11-21 の 58 のカードで、完成画像が「全身の絵が描かれたカード」になった。体が板になった絵にする。
+        lines += [
+            "- 体そのものが、この薄い面になる。キャラクターの全身の絵を印刷したカード・ポスター・看板にしない。"
+            "面の外形がそのまま体の外形で、面の中に、小さく描いた全身像・余白・背景・枠を残さない。",
+            "  The body itself is this thin sheet, not a card, poster or sign with a full-body picture of the"
+            " character printed on it. The sheet's outline is the body's outline: leave no miniature full-body"
+            " figure, margin, background or frame inside it.",
+        ]
     for limb, label in (("arms", "腕"), ("legs", "脚")):
         text = limb_text(spec, limb)
         if text:

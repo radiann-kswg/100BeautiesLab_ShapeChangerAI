@@ -33,7 +33,7 @@ from typing import Any, Callable
 
 from ..shape import cues as cue_rules
 from ..shape import objects
-from ..shape.modes import appendage_text, limb_text
+from ..shape.modes import appendage_text, is_sheet, limb_text
 from ..utils.provider import GenerationResult, ProviderError
 from .design_reference import Vision, observation_block
 from .input_images import for_stage
@@ -198,7 +198,10 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
         observation_block(design),
         "[検査のしかた]\n"
         "- shape_issues: 輪郭が指定の形状でない、縦横比や厚みが大きく違う、顔の位置が違う、"
-        "腕・脚・耳・尾の扱いが指定と違う場合に入れる。\n"
+        "腕・脚・耳・尾の扱いが指定と違う場合に入れる。"
+        + ("薄い面の中に、小さく描いた全身像・余白・背景・枠があり、体が面になった姿ではなく"
+           "「全身の絵が描かれた板」に見える場合は、「絵の描かれた板: 〜」として入れる。" if is_sheet(spec) else "")
+        + "\n"
         "- violations: 設定に無い装飾や部位の描き足しは「蛇足: 〜」、左右で異なる要素が公式画像と"
         "逆なら「左右反転: 〜」、説明文・ラベル・透かしは「文字: 〜」として入れる。\n"
         "- missing: 識別特徴が無い、数が違う、位置が違う、色相が明らかに違う場合に"

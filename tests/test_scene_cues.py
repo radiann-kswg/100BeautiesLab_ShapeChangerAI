@@ -116,6 +116,7 @@ def test_inspection_reads_the_same_cues_and_allows_overlap_in_a_scene():
     # 番号を手がかりに選んでいない検査では、番号の位置と字形を確かめさせない（2026-11-21 の 58 のカードで、
     # 選んでいない番号が「手がかり: 番号が見えない」と指摘された）
     assert "番号や紋章は位置と字形を確認し" not in inspection
+    assert "「絵の描かれた板: 〜」" in inspection                    # 板の形では、絵が描かれた板になっていないかも見る
     # 尾を手がかりに選んでいないので本数は照合せず、周りの同じ種類の物を体数に数えない
     assert log[0]["action"] == "passed" and log[0]["missing"] == [] and log[0]["composition_issues"] == []
     assert meta["composition"] == "scene"
@@ -152,6 +153,22 @@ def test_measured_counts_respect_the_scene_and_the_tail_cue():
     assert result == {"missing": [], "composition_issues": []}
     number = correction_generator._cue_lines(cues.apply(build_object_spec("ソファ"), "showcase", ["number"]))
     assert "読める位置に、設定の字形で描かれていること" in number and "[構図: 場面に溶け込む]" not in number
+
+
+def test_thin_shapes_are_the_body_itself_not_a_picture_on_a_card():
+    # 2026-11-21 の 58 のカードで、完成画像が「全身の絵が描かれたカード」になった
+    rule = "体そのものが、この薄い面になる。キャラクターの全身の絵を印刷したカード・ポスター・看板にしない"
+    for mode in ("8", "10", "13", "14", "15"):
+        _, out, _ = _run(["--badge", "58", "--mode", mode, "--dry-run"])
+        assert rule in out and "小さく描いた全身像・余白・背景・枠を残さない" in out, mode
+    _, ball, _ = _run(["--badge", "58", "--mode", "4", "--dry-run"])
+    _, sofa, _ = _run(["--badge", "58", "--object", "ソファ", "--dry-run"])
+    assert rule not in ball and rule not in sofa
+    vision = _fake_vision([_OK])
+    with tempfile.TemporaryDirectory() as tmp:
+        _run(["--badge", "58", "--mode", "4", "--rough-count", "1", "--skip-canva", "--out", tmp],
+             generate=_FakeGenerator(), vision=vision)
+    assert "絵の描かれた板" not in next(call["text"] for call in vision.seen if "検査係" in call["text"])
 
 
 def test_number_inspection_follows_the_cue_and_race_reads_as_text():
