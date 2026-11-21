@@ -195,12 +195,12 @@ def _fake_vision(inspections, observation=None):
                 raise observation
             return observation or {"observations": ["尾は 7 本に見える"], "unknowns": ["背面の模様"], "conflicts": []}
         if "見えているとおりに数えて" in text:      # 設定を知らせない計数。判定の直後に、同じラフについて呼ばれる
-            return vision.measurements.pop(0)
+            return vision.measurements.pop(0) if vision.measurements else {}
         if '"mixed"' in text:                      # 合同の完成画像の、識別記号の取り違えの検査
             if isinstance(vision.mixing, Exception):
                 raise vision.mixing
             return vision.mixing
-        outcome = queue.pop(0)
+        outcome = queue.pop(0) if queue else vision.final     # ラフを使い切ったあとは、1 体の完成画像の検査
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
@@ -208,6 +208,7 @@ def _fake_vision(inspections, observation=None):
     vision.seen = seen
     vision.measurements = [{"tail_tips_visible": 7, "figure_count": 1}] * len(queue)
     vision.mixing = {"mixed": []}
+    vision.final = {"shape_issues": [], "violations": [], "missing": [], "composition_issues": []}
     return vision
 
 
@@ -253,6 +254,40 @@ def test_five_stages_inspect_fix_and_finalize():
     inspection = next(call for call in vision.seen if "検査係" in call["text"])
     assert "全身が一つの真球になる" in inspection["text"] and inspection["labels"][0] == "検査対象のラフ"
     assert any("Canva" in note for note in meta["stages"]["stage5"]["notes"])   # 連携が無ければ省いたと記録する
+
+
+def test_single_final_is_inspected_and_findings_are_recorded_without_redrawing():
+    # 2026-11-21 の 58 のカードで、清書した完成画像に番号が 2 か所、靴が 4 つ描かれ、どこにも記録されなかった
+    generator, vision = _FakeGenerator(), _fake_vision([_OK, _OK, _OK])
+    vision.final = {"shape_issues": [], "violations": ["蛇足: 番号が 2 か所"], "missing": [],
+                    "composition_issues": ["靴が 4 つ描かれている"]}
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out, _ = _run(["--badge", "57", "--mode", "4", "--out", tmp, "--skip-canva"], generate=generator,
+                            vision=vision)
+        (run_dir,) = Path(tmp).iterdir()
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+    assert code == 0 and meta["status"] == "ok"                    # 指摘があっても、完成画像は完成画像のまま
+    (name,) = meta["stages"]["stage5"]["inspection"]
+    found = meta["stages"]["stage5"]["inspection"][name]
+    assert name == "mode04_NumberTales-57_01.png" and found["skipped"] is False
+    assert found["violations"] == ["蛇足: 番号が 2 か所"] and found["composition_issues"] == ["靴が 4 つ描かれている"]
+    assert "Stage 5: mode04_NumberTales-57_01.png の検査で指摘がありました" in out
+    assert len(generator.calls) == 2                               # ラフと清書だけ。指摘を受けて描き直しはしない
+    inspected = [call for call in vision.seen if "検査係" in call["text"]]
+    assert len(inspected) == 4 and inspected[-1]["labels"][0] == "検査対象のラフ"
+    assert "靴が 4 つ、脚が 2 組など" in inspected[-1]["text"]
+
+    # 検査できなかったときは、検査していないと記録する（完成画像は残す）
+    failing = _fake_vision([_OK, _OK, _OK])
+    failing.final = ProviderError("vision down")
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out, _ = _run(["--badge", "57", "--mode", "4", "--out", tmp, "--skip-canva"], generate=_FakeGenerator(),
+                            vision=failing)
+        (run_dir,) = Path(tmp).iterdir()
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+    (found,) = meta["stages"]["stage5"]["inspection"].values()
+    assert code == 0 and found["skipped"] is True and found["error"] == "vision down"
+    assert "を検査できませんでした" in out
 
 
 def test_counted_measurements_are_checked_against_the_settings_in_code():

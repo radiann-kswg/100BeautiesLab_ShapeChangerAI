@@ -168,7 +168,8 @@ def test_object_run_passes_the_target_image_to_every_stage_and_records_its_sourc
         assert expected in inspection, expected
     assert "寸法（変形前の身長を 1 とした比）" not in inspection
     judged = [entry for entry in vision.seen if "検査係" in entry["text"]]
-    assert all(any(label.startswith("変形先の参考") for label in entry["labels"]) for entry in judged) and len(judged) == 2
+    # ラフ 2 枚と、完成画像 1 枚（完成画像の検査にも参考画像を見せる）
+    assert all(any(label.startswith("変形先の参考") for label in entry["labels"]) for entry in judged) and len(judged) == 3
     # 体数は照合しない（0 体と数えられても、指摘にしない）
     assert [entry["action"] for entry in log] == ["passed", "passed"]
 

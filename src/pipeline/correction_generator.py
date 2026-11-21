@@ -139,7 +139,8 @@ def _object_inspection_prompt(character: dict[str, Any], spec: dict[str, Any], d
         + ("番号や紋章が物の表面に無い、位置や字形が違う場合と、" if cue_rules.has(spec, "number") else "")
         + appendage_rule
         + "同じ番号や紋章が 2 か所以上に描かれていれば「重複: 〜」として入れる。\n"
-        "- composition_issues: " + composition_rule + "\n"
+        "- composition_issues: " + composition_rule
+        + "物の外へ出す腕・脚・耳・尾が設定より多い場合は、破綻として入れる。\n"
         "- 指定どおりの変化（体が物の形になる、衣装が色と柄として表面に移る、手足の収納）は問題にしない。"
         "物の素材感（ビニール、布、陶器、木など）、陰影による濃淡、角度の違いも問題にしない。"
         + ("\n- 公式画像は、キャラクターの外見（配色・模様・顔立ち）の照合に使う。" if has_official else "")
@@ -208,7 +209,8 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
         f"「〜: 設定ではどうか」の形で入れる。{tail_rule}"
         + ("番号や紋章は位置と字形を確認し、" if cue_rules.has(spec, "number") else "") + "重複は 1 体の 1 つの姿または五方向図の 1 方向図の内部だけで判定する。"
         "sequence の別の姿や五方向図の別方向図に同じ記号が描かれている場合は重複にしない。\n"
-        "- composition_issues: " + composition_rule + "\n"
+        "- composition_issues: " + composition_rule
+        + "腕・脚・靴・耳などの部位が設定より多い（靴が 4 つ、脚が 2 組など）場合は、破綻として入れる。\n"
         "- 指定どおりの変形（顔の拡大、衣装が面に沿う、手足の収納）は問題にしない。"
         "陰影による濃淡、ポーズや角度の違いも問題にしない。"
         + ("\n- 2 枚目以降は公式画像。キャラクターの外見はこれと照合する。" if has_official else "")
@@ -314,6 +316,30 @@ def inspect_rough(image: Path, prompt: str, official: list[dict[str, Any]], visi
     result["overall_ok"] = not any(result[key] for key in _ISSUE_KEYS)
     result["skipped"] = False
     return result
+
+
+def inspect_final(image: Path, *, character: dict[str, Any], spec: dict[str, Any], layout: str, amount: float,
+                  design: dict[str, Any], references: list[dict[str, Any]], vision: Vision) -> dict[str, Any]:
+    """1 体の完成画像を、ラフと同じ観点で検査する。直しはしない（記録して、依頼者に見せる）。
+
+    清書で入る破綻（番号の重複、部位の数）は、ラフの検査では見つけられない。2026-11-21 の 58 のカードで、
+    完成画像に番号が 2 か所、靴が 4 つ描かれた。
+    """
+    official = [ref for ref in references if ref.get("official")]
+    markup = next((ref for ref in references if ref.get("kind") == "markup"), None)
+    target = next((ref for ref in references if ref.get("kind") == "object"), None)
+    prompt = _inspection_prompt(character, spec, layout, amount, design, bool(official), bool(markup), bool(target))
+    analysis = inspect_rough(image, prompt, official, vision, character, layout, markup, spec, target)
+    found: dict[str, Any] = {key: analysis[key] for key in _ISSUE_KEYS}
+    found["skipped"] = analysis["skipped"]
+    if analysis.get("error"):
+        found["error"] = analysis["error"]
+    return found
+
+
+def final_issues(found: dict[str, Any]) -> list[str]:
+    """:func:`inspect_final` の指摘を、1 本の並びにする。"""
+    return [item for key in _ISSUE_KEYS for item in found[key]]
 
 
 def _issue_lines(analysis: dict[str, Any]) -> tuple[list[str], list[str]]:
