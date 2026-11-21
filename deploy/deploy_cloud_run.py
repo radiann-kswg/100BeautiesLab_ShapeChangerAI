@@ -100,7 +100,7 @@ def gcloud(*args: str, capture: bool = False, quiet: bool = False) -> str:
     if quiet:
         done = subprocess.run(command, text=True, capture_output=True)
         if done.returncode:
-            tail = re.sub(r"https?://\S+", "<url>", (done.stderr or "")[-2000:])
+            tail = re.sub(r"https?://\S+", "<url>", done.stderr or "")[-2000:]
             raise SystemExit(f"[ERROR] gcloud {args[0]} {args[1]} が失敗しました:\n{tail}")
         return ""
     done = subprocess.run(command, check=True, text=True, stdout=subprocess.PIPE if capture else None)
