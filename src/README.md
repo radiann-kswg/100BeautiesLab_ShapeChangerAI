@@ -274,7 +274,7 @@ VM では、GeneratorsAI と同じく、使うときだけ起動して SSH 越�
 
 claude.ai のコネクタとして使う公開の配置は Cloud Run にある。設定・配置・登録の手順は [docs/deploy-cloud-run.md](../docs/deploy-cloud-run.md)。
 
-HTTP で公開する場合は `MCP_TRANSPORT=streamable-http` と `MCP_ISSUER_URL` を設定する。認証は自動承認の OAuth で、利用者の本人確認はしない。VM に常駐させて公開する形は見送った。
+HTTP で公開する場合は `MCP_TRANSPORT=streamable-http`・`MCP_ISSUER_URL`・`MCP_AUTH_PASSPHRASE` を設定する。認証は OAuth で、コネクタの接続のたびに合言葉の確認画面（`/consent`）を通す。合言葉が未設定なら接続をすべて断り、`MCP_ISSUER_URL` が無ければ起動を断る（手元の検証で認証なしにする場合だけ `MCP_ALLOW_UNAUTHENTICATED=1`）。合言葉を知っている人を同じ利用者として扱い、利用者ごとの本人確認はしない。VM に常駐させて公開する形は見送った。
 
 VM は、公開用のシェーダーパッケージをサブモジュールとして取得する。Cloud Run のイメージには、次のコマンドが空のフォルダーへ書き出すシェーダーの 2 ファイルだけを入れ、`SHAPECHANGE_REPO_PATH` で置き場所を指す（[deploy/deploy_cloud_run.py](../deploy/deploy_cloud_run.py) が行う）。
 

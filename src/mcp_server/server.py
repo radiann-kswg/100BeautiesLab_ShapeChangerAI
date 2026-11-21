@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..pipeline.shape_pipeline import _load_env
 from . import output_sink, tools
-from .auth import SimpleOAuthProvider
+from .auth import SimpleOAuthProvider, register_consent_route
 from .jobs import MANAGER
 
 _load_env()
@@ -44,8 +44,9 @@ _load_env()
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "").strip() or "8001")
 # HTTP で公開する場合の URL（Cloud Run ではサービスの URL）。設定すると OAuth が有効になる。
-# SimpleOAuthProvider は認可を自動承認する個人用の実装で、利用者の本人確認はしない。
+# 認可は合言葉（MCP_AUTH_PASSPHRASE）の確認画面を通す。合言葉が未設定なら、認可をすべて断る。
 ISSUER_URL = os.getenv("MCP_ISSUER_URL", "").rstrip("/")
+_oauth_provider = SimpleOAuthProvider(ISSUER_URL) if ISSUER_URL else None
 
 
 @asynccontextmanager
@@ -59,11 +60,13 @@ mcp = FastMCP(
     "shapechange_mcp",
     host=HOST,
     port=PORT,
-    auth_server_provider=SimpleOAuthProvider() if ISSUER_URL else None,
+    auth_server_provider=_oauth_provider,
     auth=AuthSettings(issuer_url=ISSUER_URL, resource_server_url=None,
                       client_registration_options=ClientRegistrationOptions(enabled=True)) if ISSUER_URL else None,
     lifespan=_lifespan,
 )
+if _oauth_provider:
+    register_consent_route(mcp, _oauth_provider, "100BeautiesLab. ShapeChangerAI")
 
 Limb = Literal["keep", "fold", "hide"]
 Appendages = Literal["keep", "integrate"]
@@ -342,6 +345,12 @@ async def shapechange_list_characters(params: ListCharactersInput) -> str:
 def main() -> None:
     raw = (os.getenv("MCP_TRANSPORT") or "stdio").strip().lower()
     transport = "streamable-http" if raw in ("http", "streamable", "streamable-http") else "sse" if raw == "sse" else "stdio"
+    if transport != "stdio" and not ISSUER_URL and os.getenv("MCP_ALLOW_UNAUTHENTICATED") != "1":
+        # MCP_ISSUER_URL が無いと OAuth が無効になり、認証なしで公開されてしまう
+        raise SystemExit(
+            "[ERROR] HTTP で動かすには MCP_ISSUER_URL（公開 URL）と MCP_AUTH_PASSPHRASE（合言葉）が必要です。"
+            "手元の検証で認証なしにする場合だけ MCP_ALLOW_UNAUTHENTICATED=1 を指定してください。"
+        )
     mcp.run(transport=transport)
 
 

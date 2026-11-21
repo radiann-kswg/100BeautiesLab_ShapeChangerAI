@@ -23,7 +23,7 @@
 - ShapeChangerAI 専用のサーバーにし、GeneratorsAI のコネクタとは分ける。
 - ツール: 単体生成、合同生成、自然文からの依頼、改稿、ジョブ状況、確認待ちへの回答、実行一覧、実行ログ、形状一覧、キャラクター一覧。2026-11-19 に、GeneratorsAI のコネクタにそろえて、GCS に残った画像の一覧と取得、Canva のトークン更新を足した。
 - Drive へは完成画像だけを、GeneratorsAI と同じフォルダーに `shapechange_` で始まる名前で置く。中間画像は `GCS_BUCKET` があれば GCS、無ければサーバー内。
-- HTTP で公開する場合の認証は、GeneratorsAI と同じ自動承認の OAuth。本人確認はしない。
+- HTTP で公開する場合の認証は、GeneratorsAI と同じ OAuth。2026-11-21 から、接続のたびに合言葉（`MCP_AUTH_PASSPHRASE`）の確認画面を通す（それまでは自動承認）。利用者ごとの本人確認はしない。
 - Canva は ShapeChangerAI 用の連携を別に作る（リフレッシュトークンを GeneratorsAI と取り合わないため）。
 - 名前: VM での配置は `/opt/shapechanger`、Cloud Run のサービスは `shapechanger-ai`。
 
@@ -38,7 +38,7 @@
 **公開コネクタ**（2026-11-18 決定。手順は [deploy-cloud-run.md](deploy-cloud-run.md)）
 
 - claude.ai のコネクタとして使う公開の配置は、GeneratorsAI のコネクタと同じく Cloud Run にする。サービスは `shapechanger-ai`（`asia-northeast1`）で、インスタンス数・メモリー・タイムアウト・秘密の値の渡し方は `generators-ai` と同じ。
-- 公開範囲も GeneratorsAI と同じにする（認証なしで呼べる Cloud Run と、自動承認の OAuth）。URL を知っていれば誰でも課金を伴う生成を呼べることは承知のうえで、URL を公開の場に書かない運用にする。
+- 公開範囲も GeneratorsAI と同じにする（認証なしで呼べる Cloud Run と OAuth）。当初は自動承認の OAuth で、URL を公開の場に書かない運用に頼っていた。2026-11-21 に、接続時に合言葉を求める形へ変えた（GeneratorsAI の URL が公開のワークフローに書かれていたため。URL を知っているだけでは接続できない）。
 - 配置は PC からスクリプト（`deploy/deploy_cloud_run.py`）で行う。送るのは、コミット済みのコード、キャラクターデータ、シェーダーの 2 ファイルだけ。
 
 **進め方**
@@ -166,7 +166,7 @@
 - [ ] Cloud Run からの生成と Drive 保存の確認。課金を伴うため、配置の時点では行っていない。同じ資格情報での Drive 保存は VM で確認済み。
 - [x] claude.ai へのコネクタの登録（2026-11-18、ラジアンが登録）。
 - [ ] GitHub Actions からの自動デプロイ。GeneratorsAI には有るが、こちらは未整備。シェーダーの 2 ファイルは、2026-11-19 から公開のサブモジュールで取得できるようになった（ビルドへ渡す方法の課題は解消）。
-- [ ] 中間画像の置き場。Cloud Run は GCS（`generators-ai-outputs` の `shapechange/`）へ置く設定にしたが、生成を伴うため未確認。VM の `.env` には `GCS_BUCKET` を入れていないので、VM では Stage 3/4 の画像が `outputs/` に残るだけで、クライアントからは見えない。
+- [ ] 中間画像の置き場。Cloud Run は GCS（GeneratorsAI と共用のバケットの `shapechange/`）へ置く設定にしたが、生成を伴うため未確認。VM の `.env` には `GCS_BUCKET` を入れていないので、VM では Stage 3/4 の画像が `outputs/` に残るだけで、クライアントからは見えない。
 - [ ] ShapeChangerAI 用の Canva 連携の作成。アクセストークンを取得・更新する仕組みは、GeneratorsAI と同じ方法で 2026-11-19 に入れた（`python -m src.tools.refresh_canva_token` と `shapechange_refresh_canva_token`。手順は [src/README.md](../src/README.md) の「Canva の連携」）。連携がまだ無いので、書き出しもトークンのやり取りも、偽の API でしか確かめていない。
 - [x] シェーダー調整後の `src/shape/mode_descriptions.json` の見直し（2026-11-18）。寸法の読み取り結果は調整前と同じ。言葉は、膨体とコインの「形を保つ耳・尾」、上面顔円柱の顔、板・反物の顔（頭も同じ幅まで横に広がる）を直した。この記述での本番生成はまだ行っていない。
 - [x] Drive への実アップロードの確認（2026-11-18）。PC から SSH 越しに VM のコネクタへつなぎ、`shapechange_generate_character` で 42 の真球を 5 段階で生成した。完成画像 1 枚が、保存先フォルダーに `shapechange_20261118_062525_gemini_mode04_NumberTales-42__stage5_final_mode04_NumberTales-42_01.jpg` として入った。PC の `.env` の `DRIVE_*` は `deleted_client`（OAuth クライアントが削除済み）のままなので、PC から Drive へ上げる場合は Secret Manager の値に入れ替える必要がある。
