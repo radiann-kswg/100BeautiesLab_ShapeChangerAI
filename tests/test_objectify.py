@@ -62,6 +62,8 @@ def test_object_replaces_the_mode_and_takes_only_a_single_finished_picture():
     assert code == 2 and "1 体だけ" in err
     code, _, err = _run(["--badge", "57", "--mode", "4", "--face", "none", "--dry-run"])
     assert code == 2 and "--face" in err
+    code, _, err = _run(["--badge", "57", "--object", "花瓶", "--face", "none", "--cues", "face", "--dry-run"])
+    assert code == 2 and "--face none と --cues face" in err
     code, _, err = _run(["--badge", "57", "--dry-run"])
     assert code == 2 and "--mode か --object" in err
     code, _, err = _run(["--badge", "57", "--object", "  ", "--dry-run"])

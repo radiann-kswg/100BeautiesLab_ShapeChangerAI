@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..shape import cues as cue_rules
 from ..shape import objects
-from ..shape.modes import appendage_text, limb_text
+from ..shape.modes import appendage_text, is_sheet, limb_text
 
 LAYOUTS = ("single", "sequence", "five-view")
 
@@ -98,32 +99,63 @@ def state_lines(character: dict[str, Any]) -> list[str]:
     return ["[状態と衣装の指定（変形前の姿）]", *lines]
 
 
+def _number_rule(spec: dict[str, Any] | None, surface: str) -> tuple[str, str]:
+    """番号と紋章の扱い。見分ける手がかりに選んだときだけ、読める位置に出す。
+
+    選ばないときは設定の位置と大きさのまま。設定で服の陰に隠れている番号まで、目立つ場所へ大きく
+    描かれていた（58 の平面化で、カードの隅や胸の中央に番号が出た）。
+    """
+    if cue_rules.has(spec, "number"):
+        return (f"- 番号・紋章を、{surface}の読める位置に、設定の字形のまま残す。",
+                "Keep the number marking and emblems readable on the surface, in their original glyph shapes.")
+    return ("- 番号・紋章は、設定の位置・大きさ・個数のまま扱う。設定で服や髪の陰に隠れているものを、"
+            "目立つ場所へ移したり大きくしたりしない。描く場合も、変形前の姿で体に対して占めていた大きさの比を超えない。",
+            "Keep number markings and emblems at their original position, size and count; never move a hidden"
+            " marking somewhere prominent or enlarge it.")
+
+
 def _keep_block(character: dict[str, Any], spec: dict[str, Any] | None = None) -> list[str]:
     if spec and objects.is_object(spec):
+        number_ja, number_en = _number_rule(spec, "物の表面")
         lines = [
             "[物になっても維持する特徴（必須）]",
             "- 髪・肌・衣装の色と柄を、物の表面の配色と模様として残す。色相を変えない。",
-            "- 番号・紋章などの識別記号を、物の表面に読める形で残す。同じ記号を 2 か所以上に繰り返さない。",
+            number_ja + "同じ記号を 2 か所以上に繰り返さない。",
         ]
         if spec["face"]["mode"] == "keep":
             lines.append("- 顔立ちと瞳の色を変えない。")
         lines += [
             "- 耳の種類、尾の種類と本数を変えず、数えられる形で残す。",
             "Carry the hair, skin and outfit colours and patterns over to the object's surface without shifting"
-            " their hues, and keep any number markings or emblems readable on it, each drawn once. Keep the ear"
-            " type, tail type and exact tail count countable.",
+            f" their hues. {number_en} Draw each marking once. Keep the ear type, tail type and exact tail count"
+            " countable.",
         ]
         return lines + [f"- {item}" for item in character["immutable_constraints"]]
+    number_ja, number_en = _number_rule(spec, "形状の表面")
     lines = [
         "[変形後も維持する特徴（必須）]",
         "- 髪の色と髪型の特徴、瞳の色、顔立ち、衣装の色と柄を変えない。",
-        "- 耳の種類、尾の種類と本数、番号・紋章などの識別記号を変えず、数えられる形で残す。重複は禁止するが、対象は各姿・各方向図の1体の内部に限る。別の姿・方向図には必要に応じて同じ記号を描く。",
+        "- 耳の種類、尾の種類と本数を変えず、数えられる形で残す。",
+        number_ja,
+        "- 同じ記号の重複は禁止するが、対象は各姿・各方向図の1体の内部に限る。別の姿・方向図には必要に応じて同じ記号を描く。",
         "Keep the hair colour, eye colour, facial features, outfit colours and patterns, ear type,"
-        " tail type and exact tail count, and any number markings or emblems unchanged and readable."
+        f" tail type and exact tail count unchanged. {number_en}"
         " Duplicate markings are prohibited only within each individual figure in each state or view;"
         " repeat the same marking in other states or views as needed.",
     ]
     lines += [f"- {item}" for item in character["immutable_constraints"]]
+    return lines
+
+
+def _cue_block(spec: dict[str, Any]) -> list[str]:
+    """この絵で「この子だ」と分かる手がかり。検査（Stage 4）も同じ一覧を見る。"""
+    lines = [
+        "[見分ける手がかり]",
+        f"- この絵で「この子だ」と分かる手がかり: {cue_rules.names(spec)}。",
+        "- 手がかりは全部、はっきり見えるように描く。",
+    ]
+    if cue_rules.is_scene(spec):
+        lines.append("- 場面のほかの物で手がかりを隠さない。手がかり（配色・顔・番号など）を、場面のほかの物に写さない。")
     return lines
 
 
@@ -135,9 +167,12 @@ def _object_block(spec: dict[str, Any], references: list[dict[str, Any]] | None)
         f"- 物: {name}。その物として一目で読める輪郭・構造・素材感で描く。人の体の輪郭（頭・胴・肩・腰の形）は残さない。",
         f"  The character has become the object \"{name}\": it must read at a glance as that object in outline,"
         " structure and material, with no human body outline left.",
-        "- 配色と模様: 髪・肌・衣装の色と柄を、物の表面の配色と模様に移す。番号や紋章は、物の表面に描く。",
-        "  Carry the hair, skin and outfit colours and patterns over to the object's surface; paint any number"
-        " markings or emblems on it.",
+        "- 配色と模様: 髪・肌・衣装の色と柄を、物の表面の配色と模様に移す。"
+        + ("番号や紋章は、物の表面の読める位置に描く。" if cue_rules.has(spec, "number")
+           else "番号や紋章は、元の位置に当たる場所へ、元の大きさのまま移す。"),
+        "  Carry the hair, skin and outfit colours and patterns over to the object's surface"
+        + ("; paint the number marking and emblems where they read clearly." if cue_rules.has(spec, "number")
+           else "; keep number markings and emblems at the spot and size that match the original."),
         f"- 顔: {objects.face_text(spec)[0]}",
         f"  {objects.face_text(spec)[1]}",
     ]
@@ -163,6 +198,15 @@ def _shape_block(spec: dict[str, Any]) -> list[str]:
         f"- 面と衣装: {spec['surface_ja']}",
         f"  {spec['surface_en']}",
     ]
+    if is_sheet(spec):
+        # 2026-11-21 の 58 のカードで、完成画像が「全身の絵が描かれたカード」になった。体が板になった絵にする。
+        lines += [
+            "- 体そのものが、この薄い面になる。キャラクターの全身の絵を印刷したカード・ポスター・看板にしない。"
+            "面の外形がそのまま体の外形で、面の中に、小さく描いた全身像・余白・背景・枠を残さない。",
+            "  The body itself is this thin sheet, not a card, poster or sign with a full-body picture of the"
+            " character printed on it. The sheet's outline is the body's outline: leave no miniature full-body"
+            " figure, margin, background or frame inside it.",
+        ]
     for limb, label in (("arms", "腕"), ("legs", "脚")):
         text = limb_text(spec, limb)
         if text:
@@ -171,25 +215,33 @@ def _shape_block(spec: dict[str, Any]) -> list[str]:
     if appendage:
         lines += [f"- 耳と尾: {appendage[0]}", f"  {appendage[1]}"]
 
-    lines.append("- 寸法（変形前の身長を 1 とした比）:")
+    scene = cue_rules.is_scene(spec)
+
+    def _size(ratio: float, cm: float | None) -> str:
+        # 場面に溶け込む構図では、大きさは場面が決める。cm を書くと、場面の物（カード、ボール）との
+        # 大きさの関係より実寸が優先されるので、比だけを渡す。
+        return _ratio(ratio) if scene else _measure(ratio, cm)
+
+    lines.append("- 寸法の比（形の縦横比と厚み。絵の中での大きさは [場面] に従う）:" if scene
+                 else "- 寸法（変形前の身長を 1 とした比）:")
     if dims["width"] is not None:
         lines.append(
-            f"  幅 {_measure(dims['width'], cms['width'])} × 高さ {_measure(dims['height'], cms['height'])}"
-            f" × 奥行き {_measure(dims['depth'], cms['depth'])}"
+            f"  幅 {_size(dims['width'], cms['width'])} × 高さ {_size(dims['height'], cms['height'])}"
+            f" × 奥行き {_size(dims['depth'], cms['depth'])}"
         )
     else:
         lines.append(
-            f"  幅は変形前の輪郭の {_ratio(dims['width_factor'])} 倍、高さ {_measure(dims['height'], cms['height'])}、"
-            f"奥行き {_measure(dims['depth'], cms['depth'])}"
+            f"  幅は変形前の輪郭の {_ratio(dims['width_factor'])} 倍、高さ {_size(dims['height'], cms['height'])}、"
+            f"奥行き {_size(dims['depth'], cms['depth'])}"
         )
     if dims["bend"] is not None:
-        lines.append(f"  たわみの振れ幅 {_measure(dims['bend'], cms['bend'])}")
+        lines.append(f"  たわみの振れ幅 {_size(dims['bend'], cms['bend'])}")
     face = spec["face"]
     if face["rule"] in ("head_span", "headed"):
         share = round(face["share_of_shape_height"] * 100)
         lines.append(
             f"- 顔の大きさ: 頭頂から顎下まで（耳を除く）が形状の高さの約 {share}%"
-            f" = {_measure(face['span'], face['span_cm'])}"
+            f" = {_size(face['span'], face['span_cm'])}"
         )
         if face["rule"] == "headed":
             body = round(face["body_share_of_shape_height"] * 100)
@@ -208,6 +260,15 @@ def _physique_block(character: dict[str, Any], spec: dict[str, Any]) -> list[str
         f"- 変形前: {height}。{character['name_ja']} の元の頭身と体型は参照画像と設定に従う。",
     ]
     edges = [v for v in (dims["width"], dims["height"], dims["depth"]) if v is not None]
+    if cue_rules.is_scene(spec):
+        if max(edges) == min(edges):
+            lines.append("- 変形後: 幅・高さ・奥行きが同じ長さの形。絵の中での大きさは [場面] に従う。")
+        else:
+            lines.append(
+                f"- 変形後: 最も長い辺を 1 とすると、最も短い辺は {_ratio(min(edges) / max(edges))}。"
+                "この縦横比と厚みを守る。絵の中での大きさは [場面] に従う。"
+            )
+        return lines
     if max(edges) == min(edges):
         lines.append(f"- 変形後: 幅・高さ・奥行きはどれも変形前の身長の {_ratio(edges[0])} 倍。")
     else:
@@ -220,7 +281,33 @@ def _physique_block(character: dict[str, Any], spec: dict[str, Any]) -> list[str
     return lines
 
 
+def _scene_layout(spec: dict[str, Any]) -> list[str]:
+    """場面に溶け込む構図。固定の「床に置く・並べる・接地影」を使わず、場面の物との関係を優先する。"""
+    is_object = objects.is_object(spec)
+    what = "物になった 1 体" if is_object else "変形が完了した 1 体"
+    ratio = ("その物として自然な比率は守る。" if is_object
+             else "その形自体の縦横比と厚み（上の寸法の比）は守る。")
+    return [
+        "[構図: 場面に溶け込む]",
+        f"- {what}を、[場面] の中に溶け込ませて描く。場面の物と重なる、間に挟まる、上に載る、浮かぶなど、"
+        "場面の指定どおりの関係にする。",
+        "- この子が変わった姿は、絵の中に 1 つだけ描く。表と裏、別の角度を、別の物として並べない。",
+        "- 場面の物に一部が隠れてよい。隠れてよいのは輪郭の 3 分の 1 くらいまでで、見分ける手がかりは隠さない。",
+        f"- {ratio}場面の物との大きさの関係は [場面] の指定に従い、指定が無ければ場面に合う自然な大きさにする"
+        "（変形前の身長に対する実寸は問わない）。",
+        "- 影や映り込みは、場面に合うものだけを描く。水に浮く・宙に浮く・物に挟まる場面では、床の接地影を付けない。",
+        "- 同じ種類の物が周りにあるとき（カードの山、ボールの山など）は、周りの物をその物のふつうの柄で描き、"
+        "この子の手がかりを写さない。",
+        "Blend the single transformed figure into the scene: it may overlap, sit between or rest on the scene's"
+        " objects and be hidden by them up to about a third of its outline, but never hide the identifying"
+        " cues. Keep the shape's own proportions; its size relative to the scene follows the scene, not the"
+        " original body height. Draw only shadows or reflections that fit the scene.",
+    ]
+
+
 def _layout_block(spec: dict[str, Any], layout: str, amount: float) -> list[str]:
+    if cue_rules.is_scene(spec):
+        return _scene_layout(spec)
     lines = ["[構図]"]
     if objects.is_object(spec):
         return lines + [
@@ -389,7 +476,7 @@ def build_prompt(
         ]]
         blocks += _reference_block(references, bool(revisions))
         blocks += [_character_block(character), state_lines(character), _keep_block(character, spec),
-                   _object_block(spec, references), _layout_block(spec, layout, amount)]
+                   _cue_block(spec), _object_block(spec, references), _layout_block(spec, layout, amount)]
         blocks += _closing_blocks(references, scene, style, extra, revisions,
                                   _unique(character["negative_keywords"]), is_object=True)
         return _join(blocks)
@@ -400,8 +487,8 @@ def build_prompt(
         " as the same character.",
     ]]
     blocks += _reference_block(references, bool(revisions))
-    blocks += [_character_block(character), state_lines(character), _keep_block(character), _shape_block(spec),
-               _physique_block(character, spec), _layout_block(spec, layout, amount)]
+    blocks += [_character_block(character), state_lines(character), _keep_block(character, spec), _cue_block(spec),
+               _shape_block(spec), _physique_block(character, spec), _layout_block(spec, layout, amount)]
     blocks += _closing_blocks(references, scene, style, extra, revisions, _unique(character["negative_keywords"]))
     return _join(blocks)
 

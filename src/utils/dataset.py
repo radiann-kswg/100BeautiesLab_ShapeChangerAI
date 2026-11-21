@@ -566,7 +566,7 @@ def summarize_character(record: dict[str, Any], form: str | None = None, *,
         "form": resolved_form,
         "height_cm": height_cm,
         "height_note": height_note,
-        "race": data.get("RaceType"),
+        "race": _race_text(data.get("RaceType")),
         "identity_tags": _strings(common.get("identity_tags")),
         "silhouette_features": _strings(common.get("silhouette_features")),
         "form_features": form_tags or (
@@ -603,6 +603,20 @@ _DEFAULT_REFERENCE_ROLE = "公式イラスト（変形前の姿）"
 def _reference_role(rel: str) -> str:
     folders = rel.replace("\\", "/").split("/")[:-1]
     return next((role for name, role in _REFERENCE_ROLES.items() if name in folders), _DEFAULT_REFERENCE_ROLE)
+
+
+def _race_text(value: Any) -> str | None:
+    """種別を 1 行の文にする。設計目標と現状のように、説明つきの値を並べて持つレコードがある（バイナ）。"""
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, dict) and item.get("value"):
+                about = item.get("about_JP") or item.get("about_EN")
+                parts.append(f"{item['value']}（{about}）" if about else str(item["value"]))
+            elif item:
+                parts.append(str(item))
+        return " / ".join(parts) or None
+    return str(value) if value else None
 
 
 def _image_paths(node: Any) -> Iterator[str]:

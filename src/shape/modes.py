@@ -195,3 +195,15 @@ def appendage_text(spec: dict[str, Any]) -> tuple[str, str] | None:
     if text and spec["appendages"] == "keep" and spec.get("keep_note_ja"):  # 形状ごとの補足（膨体・コイン）
         return text[0] + spec["keep_note_ja"], f"{text[1]} {spec['keep_note_en']}"
     return text
+
+
+#: 紙や板のように薄い形とみなす、最も短い辺の上限（変形前の身長を 1 とした比）。
+SHEET_MAX_EDGE = 0.05
+
+
+def is_sheet(spec: dict[str, Any]) -> bool:
+    """紙や板のように薄い形か（コイン、人型平面、低い円盤、板、反物）。物品化は寸法を持たないので False。"""
+    dims = spec.get("dimensions") or {}
+    edges = [dims.get(key) for key in ("width", "height", "depth")]
+    edges = [edge for edge in edges if edge is not None]
+    return bool(edges) and min(edges) <= SHEET_MAX_EDGE
