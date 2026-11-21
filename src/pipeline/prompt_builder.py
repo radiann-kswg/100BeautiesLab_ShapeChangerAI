@@ -109,7 +109,7 @@ def _number_rule(spec: dict[str, Any] | None, surface: str) -> tuple[str, str]:
         return (f"- 番号・紋章を、{surface}の読める位置に、設定の字形のまま残す。",
                 "Keep the number marking and emblems readable on the surface, in their original glyph shapes.")
     return ("- 番号・紋章は、設定の位置・大きさ・個数のまま扱う。設定で服や髪の陰に隠れているものを、"
-            "目立つ場所へ移したり大きくしたりしない。",
+            "目立つ場所へ移したり大きくしたりしない。描く場合も、変形前の姿で体に対して占めていた大きさの比を超えない。",
             "Keep number markings and emblems at their original position, size and count; never move a hidden"
             " marking somewhere prominent or enlarge it.")
 
@@ -282,6 +282,7 @@ def _scene_layout(spec: dict[str, Any]) -> list[str]:
         "[構図: 場面に溶け込む]",
         f"- {what}を、[場面] の中に溶け込ませて描く。場面の物と重なる、間に挟まる、上に載る、浮かぶなど、"
         "場面の指定どおりの関係にする。",
+        "- この子が変わった姿は、絵の中に 1 つだけ描く。表と裏、別の角度を、別の物として並べない。",
         "- 場面の物に一部が隠れてよい。隠れてよいのは輪郭の 3 分の 1 くらいまでで、見分ける手がかりは隠さない。",
         f"- {ratio}場面の物との大きさの関係は [場面] の指定に従い、指定が無ければ場面に合う自然な大きさにする"
         "（変形前の身長に対する実寸は問わない）。",

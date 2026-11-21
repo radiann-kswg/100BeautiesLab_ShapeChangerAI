@@ -66,6 +66,8 @@ def test_scene_composition_blends_into_the_scene_and_drops_the_real_size():
                      "最も長い辺を 1 とすると、最も短い辺は 0.025", "手がかり（配色・顔・番号など）を、場面のほかの物に写さない"):
         assert expected in scene, expected
     assert "約 104.3 cm" not in scene and "床に淡い接地影を付け、" not in scene     # 実寸と固定の置き方は渡さない
+    # 2026-11-21 の 58 のカードで、表のカードと裏のカードが 2 枚描かれたラフがあった
+    assert "絵の中に 1 つだけ描く。表と裏、別の角度を、別の物として並べない" in scene
     _, floating, _ = _run(["--badge", "2B", "--object", "シャチ型フロート", "--composition", "scene",
                            "--scene", "プールの水面に浮かんでいる", "--dry-run"])
     assert "物になった 1 体を、[場面] の中に溶け込ませて描く" in floating and "その物として自然な比率は守る" in floating
@@ -100,9 +102,12 @@ def test_inspection_reads_the_same_cues_and_allows_overlap_in_a_scene():
         log = json.loads((run_dir / "stage4_correct" / "analysis_log.json").read_text(encoding="utf-8"))
     inspection = next(call["text"] for call in vision.seen if "検査係" in call["text"])
     for expected in ("場面の中に溶け込ませて描いた絵", "[見分ける手がかり]", "顔（顔立ちと瞳の色）、配色（髪・肌・衣装の色と柄）",
-                     "設定で服や髪の陰に隠れている番号が見えないことは", "「番号: 〜」", "「取り違え: 〜」",
+                     "番号・紋章は、この絵の手がかりではない", "「番号: 〜」", "「取り違え: 〜」", "「体数: 〜」",
                      "輪郭の 3 分の 1 くらいまで隠れていても", "手がかりに選んでいない特徴"):
         assert expected in inspection, expected
+    # 番号を手がかりに選んでいない検査では、番号の位置と字形を確かめさせない（2026-11-21 の 58 のカードで、
+    # 選んでいない番号が「手がかり: 番号が見えない」と指摘された）
+    assert "番号や紋章は位置と字形を確認し" not in inspection
     # 尾を手がかりに選んでいないので本数は照合せず、周りの同じ種類の物を体数に数えない
     assert log[0]["action"] == "passed" and log[0]["missing"] == [] and log[0]["composition_issues"] == []
     assert meta["composition"] == "scene"
@@ -121,6 +126,20 @@ def test_measured_counts_respect_the_scene_and_the_tail_cue():
     assert result == {"missing": [], "composition_issues": []}
     number = correction_generator._cue_lines(cues.apply(build_object_spec("ソファ"), "showcase", ["number"]))
     assert "読める位置に、設定の字形で描かれていること" in number and "[構図: 場面に溶け込む]" not in number
+
+
+def test_number_inspection_follows_the_cue_and_race_reads_as_text():
+    _, chosen, _ = _run(["--badge", "58", "--mode", "14", "--cues", "face,number", "--dry-run"])
+    assert "番号・紋章を、形状の表面の読める位置に" in chosen
+    vision = _fake_vision([_OK])
+    with tempfile.TemporaryDirectory() as tmp:
+        _run(["--badge", "58", "--mode", "14", "--cues", "face,number", "--rough-count", "1", "--skip-canva", "--out", tmp],
+             generate=_FakeGenerator(), vision=vision)
+    inspection = next(call["text"] for call in vision.seen if "検査係" in call["text"])
+    assert "番号や紋章は位置と字形を確認し" in inspection and "この絵の手がかりではない" not in inspection
+    # 種別が「値と説明」の並びのレコード（バイナ）でも、プロンプトには文として入る
+    _, binor, _ = _run(["--badge", "2B", "--mode", "4", "--dry-run"])
+    assert "[{'value'" not in binor and "PortableHumanoid(TaleBeastType)（最終的な設計目標）" in binor
 
 
 def test_natural_request_picks_the_scene_composition_only_for_one_figure_with_a_scene():
