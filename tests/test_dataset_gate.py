@@ -114,6 +114,28 @@ def test_summary_and_references_use_only_the_target_character():
     assert dataset.collect_reference_images({**izuna, "ai_training": {"allowed": False}}, "humanoid") == []
 
 
+def test_illustrations_shared_with_other_characters_are_not_used_as_references():
+    # 2 周年のイラストには 2(ツグ) とバイナが、sphericateDay の絵には 20 とバイナが写る。誰がどこにいるかを
+    # 伝えられないので、本人だけの画像があるうちは使わない
+    shared = dataset.group_illustrations()
+    assert any(rel.endswith("art_numbertalesAniv2nd.png") for rel in shared)
+    assert not any("/concept/" in rel or "/attr/" in rel for rel in shared)     # 設定画と部位図は数えない
+    for badge, form in (("2B", "humanoid"), ("2B", "corefolder"), ("20", "corefolder"), ("2", "humanoid")):
+        refs = dataset.collect_reference_images(dataset.find_character(badge=badge), form)
+        assert refs and not any(ref["rel"] in shared for ref in refs), (badge, form)
+    # 一緒に写る絵しか無いときは、役割にその旨を書いて渡す
+    izuna = dataset.find_character(badge=57)
+    solo = dataset.collect_reference_images(izuna, "humanoid")
+    original = dataset.group_illustrations
+    dataset.group_illustrations = lambda: frozenset(ref["rel"] for ref in solo)
+    try:
+        only_group = dataset.collect_reference_images(izuna, "humanoid")
+    finally:
+        dataset.group_illustrations = original
+    assert [ref["rel"] for ref in only_group] == [ref["rel"] for ref in solo]
+    assert all("ほかのキャラクターも一緒に写る" in ref["role"] and "57(イズナ)" in ref["role"] for ref in only_group)
+
+
 def test_structurally_resynced_tags_override_older_form_descriptions():
     record = {"ai_hints": {"common": {
         "identity_tags": ["fox", "TODO: ear type"],

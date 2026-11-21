@@ -92,7 +92,7 @@ def _object_inspection_prompt(character: dict[str, Any], spec: dict[str, Any], d
         + ("変形先の参考の画像にあるロゴ・文字・キャラクターの柄や配色が写っていれば「写し込み: 〜」として入れる。"
            if has_object_image else "") + "\n"
         "- missing: 番号や紋章が物の表面に無い、位置や字形が違う場合と、耳や尾の種類・本数が設定と違う場合に"
-        "「〜: 設定ではどうか」の形で入れる。\n"
+        "「〜: 設定ではどうか」の形で入れる。同じ番号や紋章が 2 か所以上に描かれていれば「重複: 〜」として入れる。\n"
         "- composition_issues: 見切れ、物が 2 つ以上描かれている、破綻した描写を入れる。\n"
         "- 指定どおりの変化（体が物の形になる、衣装が色と柄として表面に移る、手足の収納）は問題にしない。"
         "物の素材感（ビニール、布、陶器、木など）、陰影による濃淡、角度の違いも問題にしない。"
@@ -148,7 +148,7 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
         "逆なら「左右反転: 〜」、説明文・ラベル・透かしは「文字: 〜」として入れる。\n"
         "- missing: 識別特徴が無い、数が違う、位置が違う、色相が明らかに違う場合に"
         "「〜: 設定ではどうか」の形で入れる。尾は見えている本数を数え、設定の本数を確認できなければ入れる。"
-        "番号や紋章は位置と字形を確認する。\n"
+        "番号や紋章は位置と字形を確認し、同じものが 2 か所以上に描かれていれば「重複: 〜」として入れる。\n"
         "- composition_issues: 見切れ、体数の誤り、破綻した描写を入れる。\n"
         "- 指定どおりの変形（顔の拡大、衣装が面に沿う、手足の収納）は問題にしない。"
         "陰影による濃淡、ポーズや角度の違いも問題にしない。"
@@ -160,6 +160,34 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
         '{"shape_issues": [], "violations": [], "missing": [], "composition_issues": []}',
     ]
     return "\n\n".join(part for part in parts if part)
+
+
+def inspect_joint_mixing(image: Path, characters: list[dict[str, Any]], vision: Vision) -> list[str]:
+    """合同の完成画像で、体数が合っているか、識別記号が持ち主以外のキャラクターに描かれていないかを見る。
+
+    見つけた取り違えを文のリストで返す。直しはしない（記録して、依頼者に見せる）。Vision が失敗したら空。
+    """
+    listed = "\n".join(
+        f"- {character['name_ja']}: " + (" / ".join(character["appearance_details"][:8]) or "（文字の設定資料なし）")
+        for character in characters
+    )
+    prompt = (
+        f"この画像には、次の {len(characters)} 体のキャラクターが、形を変えた姿で 1 体ずつ描かれているはずです。\n"
+        f"[キャラクターと識別記号]\n{listed}\n\n"
+        "[検査のしかた]\n"
+        "- あるキャラクターの番号・名前の表記・ラベル・タグ・紋章・髪飾りが、別のキャラクターにも描かれていれば、"
+        "mixed に「<描かれている側の名前> に <持ち主の名前> の <記号>」の形で入れる。\n"
+        f"- 描かれているキャラクターが {len(characters)} 体でなければ、mixed に「体数: <何体いるか>。{len(characters)} 体を描く」と入れる。\n"
+        "- 設定のうえで両方が持つ特徴（同じ種族の耳、同じ色の髪など）は入れない。形状変化による輪郭の違いも入れない。\n"
+        '次の JSON だけを返してください（日本語の短い文。問題が無ければ空配列）: {"mixed": []}'
+    )
+    try:
+        raw = vision(prompt, [("検査対象の完成画像", image)])
+    except ProviderError as err:
+        print(f"[WARN] Stage 5: {image.name} の取り違えの検査に失敗しました: {err}")
+        return []
+    found = raw.get("mixed")
+    return [str(item) for item in found if item] if isinstance(found, list) else []
 
 
 _MEASURE_PROMPT = (

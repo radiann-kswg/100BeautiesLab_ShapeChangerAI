@@ -103,23 +103,24 @@ def _keep_block(character: dict[str, Any], spec: dict[str, Any] | None = None) -
         lines = [
             "[物になっても維持する特徴（必須）]",
             "- 髪・肌・衣装の色と柄を、物の表面の配色と模様として残す。色相を変えない。",
-            "- 番号・紋章などの識別記号を、物の表面に読める形で残す。",
+            "- 番号・紋章などの識別記号を、物の表面に読める形で残す。同じ記号を 2 か所以上に繰り返さない。",
         ]
         if spec["face"]["mode"] == "keep":
             lines.append("- 顔立ちと瞳の色を変えない。")
         lines += [
             "- 耳の種類、尾の種類と本数を変えず、数えられる形で残す。",
             "Carry the hair, skin and outfit colours and patterns over to the object's surface without shifting"
-            " their hues, and keep any number markings or emblems readable on it. Keep the ear type, tail type and"
-            " exact tail count countable.",
+            " their hues, and keep any number markings or emblems readable on it, each drawn once. Keep the ear"
+            " type, tail type and exact tail count countable.",
         ]
         return lines + [f"- {item}" for item in character["immutable_constraints"]]
     lines = [
         "[変形後も維持する特徴（必須）]",
         "- 髪の色と髪型の特徴、瞳の色、顔立ち、衣装の色と柄を変えない。",
-        "- 耳の種類、尾の種類と本数、番号・紋章などの識別記号を変えず、数えられる形で残す。",
+        "- 耳の種類、尾の種類と本数、番号・紋章などの識別記号を変えず、数えられる形で残す。同じ記号を 2 か所以上に繰り返さない。",
         "Keep the hair colour, eye colour, facial features, outfit colours and patterns, ear type,"
-        " tail type and exact tail count, and any number markings or emblems unchanged and readable.",
+        " tail type and exact tail count, and any number markings or emblems unchanged and readable,"
+        " each drawn once.",
     ]
     lines += [f"- {item}" for item in character["immutable_constraints"]]
     return lines
@@ -348,7 +349,9 @@ def _closing_blocks(references: list[dict[str, Any]] | None, scene: str, style: 
         f"- 画風: {style or ('参照画像の線と塗りに合わせる。' if references else '線のはっきりしたシンプルなアニメ調。')}",
         f"- 背景: {'場面の指定に従う。' if scene else '白の無地。'}",
         "- 画像内に説明文・ラベル・署名・透かしを入れない。",
-        "All-ages, soft and toy-like; no pain, injury, gore or torn clothing. No captions or watermarks.",
+        "- 場面や追加の指定に書かれていない小物・家具・別のキャラクターを描き足さない。",
+        "All-ages, soft and toy-like; no pain, injury, gore or torn clothing. No captions or watermarks."
+        " Do not add props or extra characters that the scene does not ask for.",
     ]
     if avoid:
         rules.append(f"- 混ぜない要素: {', '.join(avoid)}")
@@ -417,8 +420,11 @@ def build_joint_prompt(
         "[依頼]",
         f"形状変化した {len(subjects)} 体のキャラクターを 1 枚に描いてください: {names}。",
         "それぞれが別のキャラクターで、形状もキャラクターごとの指定に従います。特徴を混ぜないでください。",
+        "番号・名前の表記・ラベル・タグ・紋章・髪飾りなどの識別記号は、持ち主のキャラクターにだけ描きます。"
+        "ほかのキャラクターへ写さず、数も増やしません。",
         f"Draw these {len(subjects)} transformed characters together in one image. Each keeps its own design"
-        " and its own shape; do not mix features between them.",
+        " and its own shape; do not mix features between them. Number markings, name labels, tags and emblems"
+        " belong to one character only: never copy them onto another character.",
     ]]
     blocks += _reference_block(references, bool(revisions))
     avoid: list[str] = []

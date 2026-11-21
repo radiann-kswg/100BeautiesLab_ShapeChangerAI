@@ -157,6 +157,8 @@ def _fake_vision(inspections, observation=None):
             return observation or {"observations": ["尾は 7 本に見える"], "unknowns": ["背面の模様"], "conflicts": []}
         if "見えているとおりに数えて" in text:      # 設定を知らせない計数。判定の直後に、同じラフについて呼ばれる
             return vision.measurements.pop(0)
+        if '"mixed"' in text:                      # 合同の完成画像の、識別記号の取り違えの検査
+            return vision.mixing
         outcome = queue.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -164,6 +166,7 @@ def _fake_vision(inspections, observation=None):
 
     vision.seen = seen
     vision.measurements = [{"tail_tips_visible": 7, "figure_count": 1}] * len(queue)
+    vision.mixing = {"mixed": []}
     return vision
 
 
@@ -264,10 +267,12 @@ def test_failed_inspection_and_failed_synthesis_are_recorded_not_hidden():
 def test_joint_run_inspects_each_character_then_draws_them_together():
     generator, vision = _FakeGenerator(), _fake_vision([_OK, _OK, _OK, _OK])
     vision.measurements = [{"tail_tips_visible": 8, "figure_count": 1}] * 2 + [{"tail_tips_visible": 7, "figure_count": 1}] * 2
+    vision.mixing = {"mixed": ["73(ナトミ) に 85(ハッコ) の番号"]}
     with tempfile.TemporaryDirectory() as tmp:
         code, out, _ = _run(["--joint", "85:0,73:3", "--scene", "公園の芝生", "--out", tmp, "--skip-canva"],
                             generate=generator, vision=vision)
         assert code == 0, out
+        assert "識別記号の取り違え" in out
         (run_dir,) = Path(tmp).iterdir()
         assert run_dir.name.endswith("_gemini_joint_NumberTales-85_NumberTales-73")
         for index, slug in enumerate(("NumberTales-85", "NumberTales-73"), start=1):
@@ -281,6 +286,11 @@ def test_joint_run_inspects_each_character_then_draws_them_together():
     rough_85, rough_73, final = generator.calls
     assert "公園の芝生" not in rough_85["prompt"] and "立方体" in rough_85["prompt"] and "膨体" in rough_73["prompt"]
     assert [ref["role"] for ref in final["references"][:2]] == ["検査を通ったラフ: 85(ハッコ)", "検査を通ったラフ: 73(ナトミ)"]
+    # 公式画像にも持ち主の名前を付け、完成画像では識別記号の取り違えを見て記録する（直しはしない）
+    assert [ref["role"][-9:] for ref in final["references"][2:]] == ["（85(ハッコ)）", "（73(ナトミ)）"]
+    assert "持ち主のキャラクターにだけ描きます" in prompt
+    assert meta["stages"]["stage5"]["mixing"] == {"joint_01.png": ["73(ナトミ) に 85(ハッコ) の番号"]}
+    assert vision.seen[-1]["labels"] == ["検査対象の完成画像"] and "85(ハッコ)" in vision.seen[-1]["text"]
     for expected in ("1 体目: 85(ハッコ)", "2 体目: 73(ナトミ)", "Mode 00 立方体", "Mode 03 膨体", "公園の芝生", "同じ縮尺"):
         assert expected in prompt, expected
     for bad in (["--joint", "85:0"], ["--joint", "85:0,73:3", "--layout", "sequence"], ["--joint", "85:0,73:x"]):
