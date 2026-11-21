@@ -242,7 +242,7 @@ async def _generate(kind: str, argv: list[str], dry_run: bool) -> str:
     """``dry_run`` なら計画だけを返し、そうでなければジョブを登録する。"""
     if dry_run:
         return _json(await asyncio.to_thread(tools.dry_run, argv))
-    return _json(tools.submit(kind, argv))
+    return _json(await asyncio.to_thread(tools.submit, kind, argv))
 
 
 @mcp.tool(name="shapechange_generate_character", annotations={"title": "形状変化イラストを生成（単体）", **_WRITE})
@@ -302,7 +302,7 @@ async def shapechange_job_status(params: JobInput) -> str:
     利用者に示し、回答を得てから shapechange_answer_reference_warning を呼ぶ（回答を推測しない）。
     status が interrupted のときは、サーバーの入れ替わりでジョブが中断された可能性がある。note を利用者に伝え、
     少し待って照会し直しても変わらなければ、shapechange_list_runs で結果を確かめるか、登録し直す。"""
-    return _json(tools.job_status(params.job_id))
+    return _json(await asyncio.to_thread(tools.job_status, params.job_id))
 
 
 @mcp.tool(name="shapechange_answer_reference_warning",
