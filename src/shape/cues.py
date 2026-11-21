@@ -48,8 +48,12 @@ def default_cues(spec: dict[str, Any]) -> list[str]:
 
 
 def apply(spec: dict[str, Any], composition: str = "showcase", cues: list[str] | None = None,
-          note: str = "") -> dict[str, Any]:
-    """形状仕様に、構図と手がかりを書き足して返す。"""
+          note: str = "", requested: str = "") -> dict[str, Any]:
+    """形状仕様に、構図と手がかりを書き足して返す。
+
+    ``requested`` は依頼の場面と追加の指定。検査が、依頼どおりに描かれた物を蛇足と数えないために渡す
+    （2026-11-21 の 58 のカードで、場面に指定したトランプの山が蛇足として挙がった）。
+    """
     if composition not in COMPOSITIONS:
         raise ValueError(f"composition は {COMPOSITIONS} のいずれか: {composition}")
     selected = list(cues) if cues else default_cues(spec)
@@ -58,6 +62,7 @@ def apply(spec: dict[str, Any], composition: str = "showcase", cues: list[str] |
     spec["composition"] = composition
     spec["cues"] = selected
     spec["cue_note"] = " ".join(note.split())
+    spec["requested"] = " ".join(requested.split())
     return spec
 
 

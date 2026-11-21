@@ -95,6 +95,16 @@ def _cue_lines(spec: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _requested_lines(spec: dict[str, Any]) -> str:
+    """依頼された場面と追加の指定。ここに書かれた物を、検査が蛇足と数えないようにする。"""
+    text = spec.get("requested") or ""
+    if not text:
+        return ""
+    return ("[依頼された場面と追加の指定]\n"
+            f"- {text}\n"
+            "- ここに書かれた物・背景・小物（周りにある同じ種類の物を含む）は依頼どおりなので、蛇足として violations に入れない。")
+
+
 def _object_inspection_prompt(character: dict[str, Any], spec: dict[str, Any], design: dict[str, Any],
                               has_official: bool, has_markup: bool, has_object_image: bool) -> str:
     """物品化のラフの検査。寸法は無いので、物として読めるかと、表面へ移した手がかりを見る。"""
@@ -124,6 +134,7 @@ def _object_inspection_prompt(character: dict[str, Any], spec: dict[str, Any], d
         "[変形先の物の指定]\n" + "\n".join(target),
         "[キャラクターの識別特徴（物の表面へ移す手がかり）]\n" + "\n".join(_identity_lines(character)),
         _cue_lines(spec),
+        _requested_lines(spec),
         "\n".join(state_lines(character) + ["- この指定で変えた体型と衣装は、公式画像と違っていても violations や missing に入れない。"]
                   if state_lines(character) else []),
         observation_block(design),
@@ -194,6 +205,7 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
         "[形状の指定]\n" + "\n".join(shape),
         "[キャラクターの識別特徴]\n" + "\n".join(identity),
         _cue_lines(spec),
+        _requested_lines(spec),
         "\n".join(state_lines(character) + ["- この指定で変えた体型と衣装は、公式画像と違っていても violations や missing に入れない。"]
                   if state_lines(character) else []),
         observation_block(design),

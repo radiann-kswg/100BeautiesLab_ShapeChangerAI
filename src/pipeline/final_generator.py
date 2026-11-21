@@ -30,6 +30,15 @@ JOINT_HEADER = (
 )
 
 
+RETRY_HEADER = (
+    "[清書のやり直し]\n"
+    "前回の清書で、次の問題が見つかりました。これを解消して、最初から清書し直してください。\n"
+)
+
+#: 清書した 1 枚を見て、やり直しが要る指摘（形状の崩れ）を返す関数。
+Review = Callable[[Path], list[str]]
+
+
 def rough_reference(path: Path, role: str = "検査を通ったラフ") -> dict[str, Any]:
     return {"path": path, "rel": path.name, "role": role, "official": False, "kind": "rough"}
 
@@ -48,10 +57,18 @@ def generate_finals(
     skip_canva: bool,
     title: str,
     fallback_to_rough: bool = True,
+    review: Review | None = None,
 ) -> dict[str, Any]:
-    """``{"synth", "canva", "all", "notes"}`` を返す。``all`` が最終的な完成画像。"""
+    """``{"synth", "canva", "all", "notes", "retries"}`` を返す。``all`` が最終的な完成画像。
+
+    ``review`` を渡すと、清書した 1 枚ごとに呼び、指摘が返った清書を 1 回だけやり直す。やり直した絵の指摘が
+    減ったときだけ、そちらを完成画像にする（2026-11-21 の 58 のカードで、同じ指定でも清書ごとに
+    「体がカードになった絵」と「絵の描かれたカード」に分かれた）。
+    """
     stage_dir.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
+    retries: list[dict[str, Any]] = []
+    drawn = True
     try:
         synth = generator(
             header + prompt, references=[*roughs, *references],
@@ -61,11 +78,34 @@ def generate_finals(
         if not fallback_to_rough:
             raise
         notes.append(f"清書に失敗したため、Stage 4 の画像を完成画像にしました: {err}")
-        synth = []
+        synth, drawn = [], False
         for index, source in enumerate((Path(ref["path"]) for ref in roughs[:count]), start=1):
             target = stage_dir / f"{stem}_{index:02d}{source.suffix}"
             shutil.copyfile(source, target)
             synth.append(target)
+
+    for index, image in enumerate(list(synth) if review and drawn else []):
+        issues = review(image)
+        if not issues:
+            continue
+        entry: dict[str, Any] = {"from": image.name, "reason": issues, "kept": image.name}
+        retries.append(entry)
+        try:
+            redo = generator(
+                RETRY_HEADER + "\n".join(f"- {issue}" for issue in issues) + "\n\n" + header + prompt,
+                references=[*roughs, *references], out_dir=stage_dir,
+                stem=f"{stem}_{index + 1:02d}_retry", aspect=aspect, count=1,
+            ).files[0]
+        except ProviderError as err:
+            entry["error"] = str(err)
+            notes.append(f"清書のやり直しに失敗したため、最初の清書を使います（{image.name}）: {err}")
+            continue
+        entry["to"] = redo.name
+        if len(review(redo)) < len(issues):
+            synth[index] = redo
+            entry["kept"] = redo.name
+        notes.append(f"形状の指摘があったため清書をやり直しました（{image.name} → {redo.name}）。"
+                     f"完成画像にしたのは {entry['kept']}。")
 
     exported: list[Path] = []
     selected: list[Path] = []
@@ -88,4 +128,4 @@ def generate_finals(
             selected.append(image)
     for note in notes:
         print(f"[INFO] Stage 5: {note}")
-    return {"synth": synth, "canva": exported, "all": selected, "notes": notes}
+    return {"synth": synth, "canva": exported, "all": selected, "notes": notes, "retries": retries}

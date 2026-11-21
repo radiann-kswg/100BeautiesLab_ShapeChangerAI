@@ -200,7 +200,8 @@ def _fake_vision(inspections, observation=None):
             if isinstance(vision.mixing, Exception):
                 raise vision.mixing
             return vision.mixing
-        outcome = queue.pop(0) if queue else vision.final     # ラフを使い切ったあとは、1 体の完成画像の検査
+        # ラフを使い切ったあとは、1 体の完成画像の検査（並びを渡すと、清書・やり直しの順に返す）
+        outcome = queue.pop(0) if queue else (vision.final.pop(0) if isinstance(vision.final, list) else vision.final)
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
@@ -288,6 +289,63 @@ def test_single_final_is_inspected_and_findings_are_recorded_without_redrawing()
     (found,) = meta["stages"]["stage5"]["inspection"].values()
     assert code == 0 and found["skipped"] is True and found["error"] == "vision down"
     assert "を検査できませんでした" in out
+
+
+def test_final_with_a_shape_issue_is_redrawn_once_and_the_better_one_is_kept():
+    # 2026-11-21 の 58 のカードで、同じ指定でも清書ごとに「体がカードになった絵」と「絵の描かれたカード」に分かれた
+    bad = {"shape_issues": ["絵の描かれた板: カードに全身の絵が描かれている"], "violations": [], "missing": [],
+           "composition_issues": []}
+    good = {"shape_issues": [], "violations": [], "missing": [], "composition_issues": []}
+    generator, vision = _FakeGenerator(), _fake_vision([_OK, _OK, _OK])
+    vision.final = [bad, good]
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out, _ = _run(["--badge", "57", "--mode", "4", "--out", tmp, "--skip-canva"], generate=generator,
+                            vision=vision)
+        (run_dir,) = Path(tmp).iterdir()
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+        assert (run_dir / "stage5_final" / "mode04_NumberTales-57_01.png").is_file()      # 最初の清書も残す
+    assert code == 0 and meta["status"] == "ok"
+    assert meta["results"] == [{"file": "stage5_final/mode04_NumberTales-57_01_retry_01.png", "status": "ok"}]
+    assert meta["stages"]["stage5"]["retries"] == [{
+        "from": "mode04_NumberTales-57_01.png", "reason": bad["shape_issues"],
+        "kept": "mode04_NumberTales-57_01_retry_01.png", "to": "mode04_NumberTales-57_01_retry_01.png"}]
+    assert sorted(meta["stages"]["stage5"]["inspection"]) == ["mode04_NumberTales-57_01.png",
+                                                              "mode04_NumberTales-57_01_retry_01.png"]
+    retry_call = generator.calls[-1]
+    assert len(generator.calls) == 3 and retry_call["prompt"].startswith("[清書のやり直し]")
+    assert "- 絵の描かれた板: カードに全身の絵が描かれている" in retry_call["prompt"] and "[清書の依頼]" in retry_call["prompt"]
+    assert "形状の指摘があったため清書をやり直しました" in out
+
+    # やり直しても指摘が減らなければ、最初の清書を完成画像のままにする。やり直しは 1 回だけ
+    generator, vision = _FakeGenerator(), _fake_vision([_OK, _OK, _OK])
+    vision.final = [bad, bad]
+    with tempfile.TemporaryDirectory() as tmp:
+        _run(["--badge", "57", "--mode", "4", "--out", tmp, "--skip-canva"], generate=generator, vision=vision)
+        (run_dir,) = Path(tmp).iterdir()
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+    assert meta["results"] == [{"file": "stage5_final/mode04_NumberTales-57_01.png", "status": "ok"}]
+    assert meta["stages"]["stage5"]["retries"][0]["kept"] == "mode04_NumberTales-57_01.png" and len(generator.calls) == 3
+
+    # 形状以外の指摘（蛇足など）だけなら、やり直さない。合同の清書もやり直さない
+    plan = shape_pipeline.describe_plan(shape_pipeline.build_plan(shape_pipeline.parse_args(["--badge", "57", "--mode", "4"])))
+    joint = shape_pipeline.describe_plan(shape_pipeline.build_plan(shape_pipeline.parse_args(["--joint", "85:0,73:3"])))
+    assert plan["max_generated_images"] == 8 and joint["max_generated_images"] == 9
+
+
+def test_requested_scene_objects_are_not_reported_as_additions():
+    # 同じ実行で、場面に指定したトランプの山が「蛇足」として挙がった
+    vision = _fake_vision([_OK])
+    with tempfile.TemporaryDirectory() as tmp:
+        _run(["--badge", "57", "--mode", "4", "--scene", "机の上のトランプの山", "--extra", "赤いリボンを添える",
+              "--rough-count", "1", "--skip-canva", "--out", tmp], generate=_FakeGenerator(), vision=vision)
+    inspection = next(call["text"] for call in vision.seen if "検査係" in call["text"])
+    assert "[依頼された場面と追加の指定]\n- 机の上のトランプの山 / 赤いリボンを添える" in inspection
+    assert "依頼どおりなので、蛇足として violations に入れない" in inspection
+    plain = _fake_vision([_OK])
+    with tempfile.TemporaryDirectory() as tmp:
+        _run(["--badge", "57", "--mode", "4", "--rough-count", "1", "--skip-canva", "--out", tmp],
+             generate=_FakeGenerator(), vision=plain)
+    assert "[依頼された場面と追加の指定]" not in next(call["text"] for call in plain.seen if "検査係" in call["text"])
 
 
 def test_counted_measurements_are_checked_against_the_settings_in_code():
