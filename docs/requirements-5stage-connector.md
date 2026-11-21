@@ -237,7 +237,7 @@
 - [x] HTTP での公開（2026-11-18）。Cloud Run の `shapechanger-ai` に配置した。OAuth の登録・認可・トークン取得を経て、ツール一覧（10 件）、形状一覧（16 件）、キャラクター一覧を取得できることを確かめた。
 - [ ] Cloud Run からの生成と Drive 保存の確認。課金を伴うため、配置の時点では行っていない。同じ資格情報での Drive 保存は VM で確認済み。
 - [x] claude.ai へのコネクタの登録（2026-11-18、ラジアンが登録）。
-- [ ] GitHub Actions からの自動デプロイ。GeneratorsAI には有るが、こちらは未整備。シェーダーの 2 ファイルは、2026-11-19 から公開のサブモジュールで取得できるようになった（ビルドへ渡す方法の課題は解消）。
+- [x] GitHub Actions からの自動デプロイ（2026-11-21）。`main` への push で、テスト → 組み立て → イメージのビルド → 配置を行う。手順と準備は [deploy-cloud-run.md](deploy-cloud-run.md) の「GitHub Actions からの配置」。リポジトリのシークレットと GCP 側の許可を入れるまでは動かない。
 - [ ] 中間画像の置き場。Cloud Run は GCS（GeneratorsAI と共用のバケットの `shapechange/`）へ置く設定にしたが、生成を伴うため未確認。VM の `.env` には `GCS_BUCKET` を入れていないので、VM では Stage 3/4 の画像が `outputs/` に残るだけで、クライアントからは見えない。
 - [ ] ShapeChangerAI 用の Canva 連携の作成。アクセストークンを取得・更新する仕組みは、GeneratorsAI と同じ方法で 2026-11-19 に入れた（`python -m src.tools.refresh_canva_token` と `shapechange_refresh_canva_token`。手順は [src/README.md](../src/README.md) の「Canva の連携」）。連携がまだ無いので、書き出しもトークンのやり取りも、偽の API でしか確かめていない。
 - [x] シェーダー調整後の `src/shape/mode_descriptions.json` の見直し（2026-11-18）。寸法の読み取り結果は調整前と同じ。言葉は、膨体とコインの「形を保つ耳・尾」、上面顔円柱の顔、板・反物の顔（頭も同じ幅まで横に広がる）を直した。この記述での本番生成はまだ行っていない。

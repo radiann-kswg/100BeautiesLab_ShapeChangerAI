@@ -17,7 +17,7 @@ claude.ai の Web やスマホからコネクタとして使うための配置�
 | 改稿の起点 | 同じバケットの `shapechange/runs/<run_id>/`。実行の `run_meta.json` と完成画像を置く |
 | モデル | VM の `.env` と同じ値を [deploy/deploy_cloud_run.py](../deploy/deploy_cloud_run.py) の `ENV_VARS` に書いている |
 
-GeneratorsAI との違いは 2 つ。GitHub Actions からの自動デプロイは無く、PC からスクリプトで配置する。イメージは専用の Artifact Registry ではなく、`gcloud run deploy --source` が使う `cloud-run-source-deploy` に入る。
+配置のしかたは 2 つある。`main` に変更が入ると GitHub Actions が配置する（下の「GitHub Actions からの配置」）。PC からスクリプトで配置することもできる（下の「配置と更新」）。どちらも、送る内容の組み立てと配置の設定は [deploy/deploy_cloud_run.py](../deploy/deploy_cloud_run.py) が決める。イメージの置き場は違い、GitHub Actions は GeneratorsAI と同じ Artifact Registry のリポジトリ（イメージ名 `shapechanger-mcp`）、PC からの配置は `gcloud run deploy --source` が使う `cloud-run-source-deploy` に入る。
 
 ## 公開範囲について
 
@@ -56,6 +56,27 @@ python deploy/deploy_cloud_run.py                # ビルドして配置する
 - 形状データ。`vm_bundle` が書き出すシェーダーの 2 ファイルだけ
 
 `VRCShader_ShapeChange` のフォルダーや `.env` が混ざった場合、形状データが 2 ファイルでない場合は、送る前に止まる。送った内容は、プロジェクトの Cloud Build 用バケット（`run-sources-<PROJECT_ID>-asia-northeast1`）に残る。
+
+## GitHub Actions からの配置
+
+[.github/workflows/deploy-mcp-server.yml](../.github/workflows/deploy-mcp-server.yml) が、`main` への push（`src/`・`requirements*.txt`・`Dockerfile`・`deploy/deploy_cloud_run.py`・ワークフロー自身・2 つのサブモジュールの変更）で動く。GitHub の画面から手動でも実行できる。
+
+1. テストを流す（生成 API は呼ばない）。失敗したら配置しない。
+2. `python deploy/deploy_cloud_run.py --stage-dir <フォルダー>` で、PC からの配置と同じ内容を組み立てる。
+3. そのフォルダーで Docker イメージをビルドし、Artifact Registry へ送る。
+4. `python deploy/deploy_cloud_run.py --image <イメージ>` で配置する。環境変数・シークレット・インスタンスの設定は、PC からの配置と同じ。
+
+コネクタの URL は公開のログに出さない（配置のときの gcloud の出力は表示しない）。配置すると新しいリビジョンに替わるので、コネクタの再サインインが要る。
+
+準備（初回だけ。値はこのリポジトリに書かない）:
+
+| 場所 | 必要なもの |
+| --- | --- |
+| リポジトリのシークレット | `GCP_PROJECT_ID`、`GCP_WIF_PROVIDER`（Workload Identity のプロバイダーのリソース名）、`GCP_SERVICE_ACCOUNT`（配置に使うサービスアカウントのメール）、`MCP_ISSUER_URL`（このサービスの URL。配置済みのサービスの環境変数 `MCP_ISSUER_URL` と同じ値）、`GCS_BUCKET`（中間画像のバケット名） |
+| Workload Identity のプロバイダー | 属性の条件（`attribute-condition`）で、このリポジトリからの実行を許す。GeneratorsAI と同じプロバイダーを使うなら、条件を 2 つのリポジトリの並びにする |
+| サービスアカウント | このリポジトリの `principalSet`（`…/attribute.repository/<オーナー>/<リポジトリ>`）に `roles/iam.workloadIdentityUser` を付ける。プロジェクトでは `roles/run.admin`・`roles/artifactregistry.writer`・`roles/iam.serviceAccountUser` が要る（GeneratorsAI の配置と同じ） |
+
+このサービスアカウントは、Secret Manager の一覧とプロジェクト番号を読めない。そのため、issuer の URL とバケット名はシークレットから渡し、Canva の連携（`SHAPECHANGE_CANVA_*`）は既定では渡さない。4 件を Secret Manager に登録したあとは、ワークフローの配置のステップに環境変数 `DEPLOY_CANVA_SECRETS: "1"` を足す。
 
 ## 入力画像の置き場
 
@@ -105,6 +126,7 @@ Cloud Run は、インスタンスの起動時に Secret Manager の最新版を
 ## 制約
 
 - ジョブ・OAuth のトークン・`outputs/` はインスタンスのメモリー上にある。しばらく使わないとインスタンスが止まり、すべて消える。止まったあとはコネクタの再接続を求められることがある。
+- インスタンスが止まるのは、長く使わなかったときだけではない。生成のジョブは、リクエストに応答を返したあとに裏で動くので、Cloud Run からは「使われていない」インスタンスに見える。2026-11-21 には、最後のリクエストから 3 分 11 秒後（ジョブが終わった 11 秒後）にインスタンスが入れ替わり、サインインの状態とジョブの記録が消えた。完成画像と `run_meta.json` は、その前に Drive と GCS へ残っていた。ジョブの途中で入れ替わると、そのジョブは失われる。
 - 改稿（`shapechange_iterate`）は、インスタンスが止まったあとも、GCS の `shapechange/runs/` に残した `run_meta.json` と完成画像を戻して続けられる。`shapechange_list_runs` には `location: gcs` として並ぶ。この仕組みを入れる前（2026-11-20 より前の配置）の実行は、GCS に残っていないので起点にできない。
 - 実行ログの照会（`shapechange_get_run_logs`）で、インスタンスが止まったあとに返せるのは `run_meta.json` だけ。プロンプト・観察・検査ログは戻らない。完成画像は Drive、中間画像は GCS に残り、GCS の中間画像は `shapechange_list_gcs_logs` で一覧できる。
 - Canva 仕上げは、ShapeChangerAI 用の連携を Secret Manager へ登録するまで行わない（連携はまだ作っていない）。
