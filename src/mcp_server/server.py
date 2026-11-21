@@ -35,7 +35,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..pipeline.shape_pipeline import _load_env
-from . import output_sink, tools
+from . import output_sink, state_store, tools
 from .auth import SimpleOAuthProvider, register_consent_route
 from .jobs import MANAGER
 
@@ -46,7 +46,11 @@ PORT = int(os.getenv("PORT", "").strip() or "8001")
 # HTTP で公開する場合の URL（Cloud Run ではサービスの URL）。設定すると OAuth が有効になる。
 # 認可は合言葉（MCP_AUTH_PASSPHRASE）の確認画面を通す。合言葉が未設定なら、認可をすべて断る。
 ISSUER_URL = os.getenv("MCP_ISSUER_URL", "").rstrip("/")
-_oauth_provider = SimpleOAuthProvider(ISSUER_URL) if ISSUER_URL else None
+# サインインの状態とジョブの記録は、HTTP で公開するときだけ GCS にも置く（インスタンスが入れ替わっても残すため）。
+# 手元の stdio やテストでは置かない
+_state = state_store.default_store() if ISSUER_URL else None
+_oauth_provider = SimpleOAuthProvider(ISSUER_URL, store=_state) if ISSUER_URL else None
+MANAGER.use_store(_state)
 
 
 @asynccontextmanager
@@ -238,7 +242,7 @@ async def _generate(kind: str, argv: list[str], dry_run: bool) -> str:
     """``dry_run`` なら計画だけを返し、そうでなければジョブを登録する。"""
     if dry_run:
         return _json(await asyncio.to_thread(tools.dry_run, argv))
-    return _json(tools.submit(kind, argv))
+    return _json(await asyncio.to_thread(tools.submit, kind, argv))
 
 
 @mcp.tool(name="shapechange_generate_character", annotations={"title": "形状変化イラストを生成（単体）", **_WRITE})
@@ -295,8 +299,10 @@ async def shapechange_create_upload_slot(params: UploadSlotInput) -> str:
 @mcp.tool(name="shapechange_job_status", annotations={"title": "ジョブの進捗", **_READ})
 async def shapechange_job_status(params: JobInput) -> str:
     """ジョブの状態を返す。status が awaiting_confirmation のときは confirmation の理由と質問を
-    利用者に示し、回答を得てから shapechange_answer_reference_warning を呼ぶ（回答を推測しない）。"""
-    return _json(tools.job_status(params.job_id))
+    利用者に示し、回答を得てから shapechange_answer_reference_warning を呼ぶ（回答を推測しない）。
+    status が interrupted のときは、サーバーの入れ替わりでジョブが中断された可能性がある。note を利用者に伝え、
+    少し待って照会し直しても変わらなければ、shapechange_list_runs で結果を確かめるか、登録し直す。"""
+    return _json(await asyncio.to_thread(tools.job_status, params.job_id))
 
 
 @mcp.tool(name="shapechange_answer_reference_warning",

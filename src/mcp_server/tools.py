@@ -149,7 +149,7 @@ def job_status(job_id: str) -> dict[str, Any]:
     job = MANAGER.get(job_id)
     if job is None:
         return {"status": "not_found",
-                "message": "この job_id はありません（サーバーの再起動でジョブは消えます）。shapechange_list_runs で実行結果を確認してください。"}
+                "message": "この job_id の記録はありません。shapechange_list_runs で実行結果を確認してください。"}
     return job.snapshot()
 
 
