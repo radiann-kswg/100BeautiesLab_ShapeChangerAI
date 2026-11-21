@@ -1,6 +1,6 @@
 # VM への配置（使うときだけ起動する SSH/CLI 実行基盤）
 
-GeneratorsAI の VM と同じ方針で、GCE の VM `generators-ai`（プロジェクト `claude-radiannkswg`、ゾーン `us-central1-f`、Debian 13）に相乗りする。VM は使うときだけ起動し、MCP クライアントからは SSH 越しの stdio でつなぐ。公開ポート・Caddy・DNS は使わない。決めた経緯は [requirements-5stage-connector.md](requirements-5stage-connector.md)。
+GeneratorsAI の VM と同じ方針で、GCE の VM `generators-ai`（Debian 13）に相乗りする。このリポジトリは公開なので、プロジェクト ID とゾーンは書かない。下のコマンドの `<ZONE>`・`<PROJECT_ID>` は実際の値に読み替える。VM は使うときだけ起動し、MCP クライアントからは SSH 越しの stdio でつなぐ。公開ポート・Caddy・DNS は使わない。決めた経緯は [requirements-5stage-connector.md](requirements-5stage-connector.md)。
 
 完成画像の Drive への保存は MCP サーバー（`shapechange_*` ツール）が行う。VM 上で CLI を直接実行した場合、出力は VM の `outputs/` に残り、Drive には上がらない。
 
@@ -21,8 +21,8 @@ VM が取得するのは公開リポジトリだけ。シェーダーの非公�
 ## 起動と停止
 
 ```sh
-gcloud compute instances start generators-ai --zone=us-central1-f
-gcloud compute instances stop  generators-ai --zone=us-central1-f
+gcloud compute instances start generators-ai --zone=<ZONE>
+gcloud compute instances stop  generators-ai --zone=<ZONE>
 ```
 
 固定 IP は予約していないので、外部 IP は起動のたびに変わる。使い終わったら停止する。長く使わない場合は、`/opt/shapechanger/.env` を消してから停止する（次回 `setup_vm.sh` を実行すれば作り直される）。
@@ -32,8 +32,8 @@ gcloud compute instances stop  generators-ai --zone=us-central1-f
 PC のリポジトリのルートで実行する。`setup_vm.sh` は何度実行しても壊れないので、初回もコードの更新も同じ手順になる。
 
 ```sh
-gcloud compute scp deploy/setup_vm.sh generators-ai:setup_shapechanger_vm.sh --zone=us-central1-f
-gcloud compute ssh generators-ai --zone=us-central1-f --command "bash ~/setup_shapechanger_vm.sh"
+gcloud compute scp deploy/setup_vm.sh generators-ai:setup_shapechanger_vm.sh --zone=<ZONE>
+gcloud compute ssh generators-ai --zone=<ZONE> --command "bash ~/setup_shapechanger_vm.sh"
 ```
 
 スクリプトが行うこと:
@@ -51,7 +51,7 @@ Canva の値は入れない。VM では Canva 仕上げを省いた結果にな�
 モデルを PC の `.env` と同じにする場合は、VM の `.env` に行を足す（一度足せば、作り直しても引き継がれる）。
 
 ```sh
-gcloud compute ssh generators-ai --zone=us-central1-f --command "echo GEMINI_REFERENCE_MODEL=models/gemini-3.1-flash-image >> /opt/shapechanger/.env"
+gcloud compute ssh generators-ai --zone=<ZONE> --command "echo GEMINI_REFERENCE_MODEL=models/gemini-3.1-flash-image >> /opt/shapechanger/.env"
 ```
 
 ## MCP クライアントからつなぐ
@@ -59,12 +59,12 @@ gcloud compute ssh generators-ai --zone=us-central1-f --command "echo GEMINI_REF
 SSH 越しに、VM の上で MCP サーバーを stdio で起動する。サーバーは `.env` を自分で読む。
 
 ```sh
-claude mcp add --transport stdio --env CLOUDSDK_SSH_PUTTY_FORCE_CONNECT=false shapechange-vm -- gcloud compute ssh generators-ai --zone=us-central1-f --project=claude-radiannkswg --quiet --ssh-flag=-T --command "cd /opt/shapechanger && exec .venv/bin/python -m src.mcp_server"
+claude mcp add --transport stdio --env CLOUDSDK_SSH_PUTTY_FORCE_CONNECT=false shapechange-vm -- gcloud compute ssh generators-ai --zone=<ZONE> --project=<PROJECT_ID> --quiet --ssh-flag=-T --command "cd /opt/shapechanger && exec .venv/bin/python -m src.mcp_server"
 ```
 
 - `shapechange_*` のツールが 13 件見えればつながっている。
 - **Windows では `CLOUDSDK_SSH_PUTTY_FORCE_CONNECT=false` が要る。** 無いと gcloud が plink の標準入力へ `y` を流し込み、クライアントからの通信がサーバーへ届かない。
-- **VM を起動した直後は、先に 1 回ふつうに SSH する**（`gcloud compute ssh generators-ai --zone=us-central1-f --command true`）。外部 IP が変わると plink がホスト鍵の確認を求め、上の設定ではそこで止まるため。
+- **VM を起動した直後は、先に 1 回ふつうに SSH する**（`gcloud compute ssh generators-ai --zone=<ZONE> --command true`）。外部 IP が変わると plink がホスト鍵の確認を求め、上の設定ではそこで止まるため。
 - ジョブはサーバーのメモリー上にある。クライアントを閉じて SSH が切れると、実行中のジョブも止まる。実行の記録は VM の `outputs/` に残る。
 - 2026-11-18 に確かめたのは、PC から上のコマンドと同じ経路（`gcloud.cmd` を子プロセスで起動）でのツール一覧の取得まで。`claude mcp add` での登録そのものは未確認。
 

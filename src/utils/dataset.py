@@ -13,7 +13,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .paths import project_root
 
@@ -605,6 +605,43 @@ def _reference_role(rel: str) -> str:
     return next((role for name, role in _REFERENCE_ROLES.items() if name in folders), _DEFAULT_REFERENCE_ROLE)
 
 
+def _image_paths(node: Any) -> Iterator[str]:
+    if isinstance(node, str):
+        if node.startswith("data/"):
+            yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from _image_paths(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _image_paths(value)
+
+
+@functools.lru_cache(maxsize=4)
+def _group_illustrations(manifest: str, mtime: float) -> frozenset[str]:
+    """2 件以上のキャラクターレコードが参照する公式イラスト（複数のキャラクターが 1 枚に写る絵）。
+
+    上流のデータには、イラストに誰が写っているかの情報が無い。設定画や部位図は、同じ人物を別の DB から
+    指すことがあるので数えない。
+    """
+    owners: dict[str, set[str]] = {}
+    with open(manifest, encoding="utf-8") as handle:
+        for line in handle:
+            record = json.loads(line) if line.strip() else {}
+            if not is_character(record):
+                continue
+            key = json.dumps(_record_key(record), ensure_ascii=False, sort_keys=True)
+            for rel in {*_image_paths(record.get("images")), *_image_paths(record.get("preferred_reference_images"))}:
+                if _reference_role(rel) == _DEFAULT_REFERENCE_ROLE:
+                    owners.setdefault(rel, set()).add(key)
+    return frozenset(rel for rel, keys in owners.items() if len(keys) > 1)
+
+
+def group_illustrations() -> frozenset[str]:
+    target = manifest_path()
+    return _group_illustrations(str(target), target.stat().st_mtime)
+
+
 def collect_reference_images(
     record: dict[str, Any], form: str | None, max_images: int = 4
 ) -> list[dict[str, Any]]:
@@ -613,6 +650,10 @@ def collect_reference_images(
     上流が選んだ ``preferred_reference_images`` と尾の部位図だけを使う。別キャラクターの
     差分（concept_variants）や寄稿イラストは選ばない。CreationsDB の ``data/`` 配下に
     実在するファイルに限る。AI 利用が許可されていないレコードには空を返す。
+
+    ほかのキャラクターも一緒に写るイラストは、本人だけの画像が 1 枚でもあれば使わない（誰がどこに
+    写っているかを伝える手段が無く、別のキャラクターの髪や配色が混ざるため）。それしか無いときは、
+    役割にその旨を書いて渡す。
     """
     if not generation_gate(record)["allowed"]:
         return []
@@ -625,8 +666,10 @@ def collect_reference_images(
     candidates.append(common.get("catalog"))
 
     data_root = (creations_db_root() / "data").resolve()
+    shared = group_illustrations()
     seen: set[Path] = set()
     refs: list[dict[str, Any]] = []
+    group: list[dict[str, Any]] = []
     for rel in candidates:
         if not isinstance(rel, str) or not rel:
             continue
@@ -634,7 +677,12 @@ def collect_reference_images(
         if path in seen or data_root not in path.parents or not path.is_file():
             continue
         seen.add(path)
-        refs.append({"path": path, "rel": rel.replace("\\", "/"), "role": _reference_role(rel), "official": True})
+        rel = rel.replace("\\", "/")
+        if rel in shared:
+            group.append({"path": path, "rel": rel, "official": True, "role":
+                          f"公式イラスト（ほかのキャラクターも一緒に写る。{display_name(record)} だけを見る）"})
+            continue
+        refs.append({"path": path, "rel": rel, "role": _reference_role(rel), "official": True})
         if len(refs) >= max_images:
             break
-    return refs
+    return refs or group[:max_images]

@@ -26,6 +26,7 @@ if str(_ROOT) not in sys.path:
 
 from src.mcp_server import tools  # noqa: E402
 from src.pipeline import shape_pipeline  # noqa: E402
+from src.utils.provider import ProviderError  # noqa: E402
 from test_pipeline import _OK, _FakeGenerator, _fake_vision  # noqa: E402
 
 
@@ -123,6 +124,27 @@ def test_job_runs_the_pipeline_and_publishes_the_finals():
                 continue
             raise AssertionError(bad)
     assert tools.job_status("missing")["status"] == "not_found"
+
+
+def test_job_and_run_record_preserve_failed_joint_inspection_per_image():
+    generator, vision = _FakeGenerator(), _fake_vision([_OK, _OK])
+    vision.mixing = ProviderError("vision down")
+    with tempfile.TemporaryDirectory() as tmp, _outputs(tmp):
+        def pipeline(argv, **hooks):
+            return shape_pipeline.run_pipeline(argv + [f"--out={tmp}"], generate=generator, vision=vision, **hooks)
+
+        submitted = tools.submit("generate_joint", tools.build_argv(
+            {"subjects": [{"id": "85", "mode": 0}, {"id": "73", "mode": 3}],
+             "rough_count": 1, "skip_canva": True}), pipeline=pipeline)
+        done = _wait(submitted["job_id"])
+        result = done["result"]
+        (run_dir,) = Path(tmp).iterdir()
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+
+    expected = {"mixed": [], "skipped": True, "error": "vision down"}
+    assert done["status"] == "succeeded" and result["status"] == "ok"
+    assert result["mixing"] == {"joint_01.png": expected}
+    assert meta["stages"]["stage5"]["mixing"] == {"joint_01.png": expected}
 
 
 def test_refused_or_invalid_requests_fail_the_job_with_the_reason():

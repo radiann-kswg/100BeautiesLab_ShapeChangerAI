@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import io
+import json
+import os
 import shutil
 import subprocess
 import sys
@@ -22,7 +24,9 @@ sys.path.insert(0, str(ROOT))
 
 from src.shape.vm_bundle import write_bundle  # noqa: E402
 
-PROJECT = "claude-radiannkswg"
+# プロジェクト ID とバケット名は、公開リポジトリに書かない。プロジェクトは環境変数 DEPLOY_GCP_PROJECT か
+# gcloud の既定、バケットは環境変数 DEPLOY_GCS_BUCKET か配置済みのサービスの設定から読む（deploy() を参照）
+PROJECT = os.getenv("DEPLOY_GCP_PROJECT", "").strip()
 REGION = "asia-northeast1"
 SERVICE = "shapechanger-ai"
 TRACKED = ["Dockerfile", "requirements.txt", "requirements-mcp.txt", "src"]
@@ -32,14 +36,14 @@ DATA_TAR = "creations-data.tar"
 ENV_VARS = {
     "MCP_TRANSPORT": "streamable-http",
     "OUTPUT_SINK": "drive",
-    "GCS_BUCKET": "generators-ai-outputs",   # 中間画像の置き場（GeneratorsAI と同じバケット、接頭辞で分ける）
-    "GCS_PREFIX": "shapechange",
+    "GCS_PREFIX": "shapechange",             # 中間画像の置き場は GeneratorsAI と同じバケットで、接頭辞で分ける
     "GEMINI_REFERENCE_MODEL": "models/gemini-3.1-flash-image",
     "GPT_MODEL": "gpt-4o",
     "OPENAI_IMAGE_QUALITY": "standard",
 }
-# Secret Manager から渡す値。Canva は GeneratorsAI の連携を流用しないので入れない
-SECRETS = ["GEMINI_API_KEY", "OPENAI_API_KEY", "DRIVE_FOLDER_ID", "DRIVE_CLIENT_ID", "DRIVE_CLIENT_SECRET",
+# Secret Manager から渡す値。Canva は GeneratorsAI の連携を流用しないので入れない。
+# MCP_AUTH_PASSPHRASE はコネクタの接続時に確認画面で入力する合言葉（GeneratorsAI と同じシークレット）
+SECRETS = ["MCP_AUTH_PASSPHRASE", "GEMINI_API_KEY", "OPENAI_API_KEY", "DRIVE_FOLDER_ID", "DRIVE_CLIENT_ID", "DRIVE_CLIENT_SECRET",
            "DRIVE_REFRESH_TOKEN"]
 # ShapeChangerAI 用の Canva 連携（任意）。4 件とも Secret Manager にあるときだけ渡す
 # （登録は python -m src.tools.refresh_canva_token --push-secrets）
@@ -84,9 +88,26 @@ def gcloud(*args: str, capture: bool = False) -> str:
     exe = shutil.which("gcloud")
     if not exe:
         raise SystemExit("[ERROR] gcloud が見つかりません。")
-    done = subprocess.run([exe, *args, f"--project={PROJECT}"], check=True, text=True,
+    done = subprocess.run([exe, *args, *([f"--project={PROJECT}"] if PROJECT else [])], check=True, text=True,
                           stdout=subprocess.PIPE if capture else None)
     return (done.stdout or "").strip()
+
+
+def bucket() -> str:
+    """中間画像を置くバケット。環境変数 DEPLOY_GCS_BUCKET が無ければ、配置済みのサービスの設定を引き継ぐ。"""
+    name = os.getenv("DEPLOY_GCS_BUCKET", "").strip()
+    if not name:
+        try:
+            service = json.loads(gcloud("run", "services", "describe", SERVICE, f"--region={REGION}",
+                                        "--format=json", capture=True))
+            containers = service["spec"]["template"]["spec"]["containers"]
+            name = next((item.get("value", "") for item in containers[0].get("env", [])
+                         if item.get("name") == "GCS_BUCKET"), "")
+        except (subprocess.CalledProcessError, KeyError, IndexError, ValueError):
+            name = ""
+    if not name:
+        raise SystemExit("[ERROR] バケット名が分かりません。環境変数 DEPLOY_GCS_BUCKET に指定してください。")
+    return name
 
 
 def canva_secrets() -> list[str]:
@@ -103,9 +124,13 @@ def canva_secrets() -> list[str]:
 
 def deploy(source: Path, commit: str) -> str:
     # URL は「サービス名-プロジェクト番号.リージョン.run.app」で決まるので、デプロイ前に OAuth の issuer を渡せる
-    number = gcloud("projects", "describe", PROJECT, "--format=value(projectNumber)", capture=True)
+    project = PROJECT or gcloud("config", "get-value", "project", capture=True)
+    if not project:
+        raise SystemExit("[ERROR] プロジェクトが分かりません。環境変数 DEPLOY_GCP_PROJECT か gcloud config で指定してください。")
+    number = gcloud("projects", "describe", project, "--format=value(projectNumber)", capture=True)
     url = f"https://{SERVICE}-{number}.{REGION}.run.app"
-    env = ",".join(f"{key}={value}" for key, value in {**ENV_VARS, "MCP_ISSUER_URL": url}.items())
+    env = ",".join(f"{key}={value}" for key, value in
+                   {**ENV_VARS, "GCS_BUCKET": bucket(), "MCP_ISSUER_URL": url}.items())
     secrets = ",".join(f"{name}={name}:latest" for name in SECRETS + canva_secrets())
     gcloud("run", "deploy", SERVICE, f"--source={source}", f"--region={REGION}", "--port=8080",
            "--allow-unauthenticated", "--min-instances=0", "--max-instances=1", "--memory=1Gi", "--timeout=3600",
@@ -124,7 +149,8 @@ def main() -> int:
         if stage_only:
             return 0
         url = deploy(Path(tmp), commit)
-    print(f"コネクタの URL: {url}/mcp")
+    print("配置しました。コネクタの URL は、サービスの URL の末尾に /mcp を付けたものです"
+          f"（gcloud run services describe {SERVICE} --region={REGION} --format=\"value(status.url)\"）。")
     return 0
 
 

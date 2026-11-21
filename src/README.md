@@ -7,7 +7,7 @@
 | 入力 | 読む場所 | 使う内容 |
 | --- | --- | --- |
 | キャラクター | `_creations-ai/ai-dataset/manifest.jsonl` | 名前・身長・外見の特徴・尾の構造・配色・AI 利用可否・公式画像のパス |
-| 参照画像 | `_creations-ai/creations-db/data/` | 対象キャラクター本人の公式イラスト・設定画・尾の部位図・デザイン表（最大 4 枚） |
+| 参照画像 | `_creations-ai/creations-db/data/` | 対象キャラクター本人の公式イラスト・設定画・尾の部位図・デザイン表（最大 4 枚）。ほかのキャラクターも一緒に写るイラスト（2 件以上のレコードが参照する絵）は、本人だけの画像があれば使わない |
 | 形状の寸法 | `VRCShader_ShapeChange/`（公開用のシェーダーパッケージ）の `ShapeChange.hlsl` と `ShapeChangeProperties.lilblock` | 16 形状の完成寸法（変形前の身長を 1 とした比）、厚み、顔の比率、四肢と付属物の既定 |
 | 形状の記述 | [`shape/mode_descriptions.json`](shape/mode_descriptions.json) | 輪郭・顔の位置・面と衣装の割り当て・途中の姿（2D 作画向けの言葉） |
 
@@ -35,7 +35,7 @@
 | 2 | 公式設定画を観察して、見えている特徴を言葉にする。失敗時は続行／中止を確認し、無回答は中止 | OpenAI（`GPT_MODEL`） |
 | 3 | ラフを生成する（単体 3 枚、合同は 1 体あたり 2 枚） | Gemini / OpenAI の画像モデル |
 | 4 | ラフを検査する。形状と違反の指摘が 3 件以上なら作り直し、それ未満はラフを起点に修正する | OpenAI（`GPT_MODEL`）+ 画像モデル |
-| 5 | 検査を通ったラフから完成画像を清書し、Canva の連携があれば仕上げて書き出す | 画像モデル + Canva |
+| 5 | 検査を通ったラフから完成画像を清書し、Canva の連携があれば仕上げて書き出す。合同では、完成画像で識別記号（番号・ラベル・タグなど）が持ち主以外に描かれていないかを見て、指摘を `run_meta.json` の `stages.stage5.mixing`（コネクタの結果では `mixing`）に残す。直しはしない | 画像モデル + Canva（合同の検査は OpenAI） |
 
 Stage 4 では、尾の本数と体数を「設定を知らせない別の呼び出し」で数えさせ、設定との照合をコードで行う。数え方には 1〜2 本の誤差がある。検査に失敗したラフは未検査と記録して通す。
 
@@ -146,7 +146,7 @@ python -m src.pipeline.shape_pipeline --badge 57 --mode 4 --quick --skip-canva \
 
 改稿の実行フォルダーは、名前の末尾に `_iter1`、その改稿をさらに改稿すると `_iter2` が付く。`--quick` の改稿は、起点の実行が `run_meta.json` の `design_observations` に残した Stage 2 の観察を使い回す（観察をやり直さない）。変える点は `--revisions` の文か、赤入れの画像（役割 `markup`）で伝え、両方あれば両方使う。
 
-生成は課金を伴う。先に `--dry-run` でプロンプトと参照画像を確認する。5 段階は 1 回の実行で、画像生成が最大 7 回ほど（ラフ 3、修正最大 3、完成 1）と Vision の呼び出しが 7 回ほどかかる。
+生成は課金を伴う。先に `--dry-run` でプロンプトと参照画像を確認する。5 段階は 1 回の実行で、画像生成が最大 7 回ほど（ラフ 3、修正最大 3、完成 1）と Vision の呼び出しが 7 回ほどかかる（合同は、完成画像 1 枚につき 1 回増える）。
 
 PowerShell で `python` が Microsoft Store のエイリアスに当たって起動しない場合は、`python` を `py` に読み替える（例: `py -m src.pipeline.shape_pipeline --list-modes`）。
 
@@ -274,7 +274,7 @@ VM では、GeneratorsAI と同じく、使うときだけ起動して SSH 越�
 
 claude.ai のコネクタとして使う公開の配置は Cloud Run にある。設定・配置・登録の手順は [docs/deploy-cloud-run.md](../docs/deploy-cloud-run.md)。
 
-HTTP で公開する場合は `MCP_TRANSPORT=streamable-http` と `MCP_ISSUER_URL` を設定する。認証は自動承認の OAuth で、利用者の本人確認はしない。VM に常駐させて公開する形は見送った。
+HTTP で公開する場合は `MCP_TRANSPORT=streamable-http`・`MCP_ISSUER_URL`・`MCP_AUTH_PASSPHRASE` を設定する。認証は OAuth で、コネクタの接続のたびに合言葉の確認画面（`/consent`）を通す。合言葉が未設定なら接続をすべて断り、`MCP_ISSUER_URL` が無ければ起動を断る（手元の検証で認証なしにする場合だけ `MCP_ALLOW_UNAUTHENTICATED=1`）。合言葉を知っている人を同じ利用者として扱い、利用者ごとの本人確認はしない。VM に常駐させて公開する形は見送った。
 
 VM は、公開用のシェーダーパッケージをサブモジュールとして取得する。Cloud Run のイメージには、次のコマンドが空のフォルダーへ書き出すシェーダーの 2 ファイルだけを入れ、`SHAPECHANGE_REPO_PATH` で置き場所を指す（[deploy/deploy_cloud_run.py](../deploy/deploy_cloud_run.py) が行う）。
 

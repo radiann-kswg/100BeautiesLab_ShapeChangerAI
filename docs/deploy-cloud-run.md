@@ -6,13 +6,13 @@ claude.ai の Web やスマホからコネクタとして使うための配置�
 
 | 項目 | 値 |
 | --- | --- |
-| サービス | `shapechanger-ai`（プロジェクト `claude-radiannkswg`、リージョン `asia-northeast1`） |
-| URL | `https://shapechanger-ai-<プロジェクト番号>.asia-northeast1.run.app`（コネクタに登録するのは末尾に `/mcp` を付けたもの）。プロジェクト番号は `gcloud projects describe claude-radiannkswg --format="value(projectNumber)"` で確かめる |
-| 公開範囲 | 認証なしで呼べる（`allUsers` に `roles/run.invoker`）。MCP の認証は自動承認の OAuth |
+| サービス | `shapechanger-ai`（リージョン `asia-northeast1`）。プロジェクトは、環境変数 `DEPLOY_GCP_PROJECT` か gcloud の既定（`gcloud config get-value project`） |
+| URL | `https://shapechanger-ai-<プロジェクト番号>.asia-northeast1.run.app`（コネクタに登録するのは末尾に `/mcp` を付けたもの）。プロジェクト番号は `gcloud projects describe <PROJECT_ID> --format="value(projectNumber)"` で確かめる |
+| 公開範囲 | 認証なしで呼べる（`allUsers` に `roles/run.invoker`）。MCP の認証は OAuth で、接続のたびに合言葉の確認画面を通す（下の「公開範囲について」） |
 | インスタンス | 最小 0・最大 1、メモリー 1Gi、CPU は常時割り当て、タイムアウト 3600 秒 |
-| 秘密の値 | Secret Manager の `GEMINI_API_KEY`・`OPENAI_API_KEY`・`DRIVE_*`（最新版）。Canva の連携（`SHAPECHANGE_CANVA_*` の 4 件）は、4 件とも Secret Manager にあるときだけ渡す（下の「Canva の連携」） |
+| 秘密の値 | Secret Manager の `MCP_AUTH_PASSPHRASE`（コネクタの合言葉。GeneratorsAI と同じシークレット）・`GEMINI_API_KEY`・`OPENAI_API_KEY`・`DRIVE_*`（最新版）。Canva の連携（`SHAPECHANGE_CANVA_*` の 4 件）は、4 件とも Secret Manager にあるときだけ渡す（下の「Canva の連携」） |
 | 完成画像 | Drive（GeneratorsAI と同じフォルダー、名前は `shapechange_` で始まる） |
-| 中間画像 | GCS の `generators-ai-outputs` バケット、接頭辞 `shapechange/`。署名付き URL（7 日間有効）で返す |
+| 中間画像 | GCS のバケット（GeneratorsAI と共用）、接頭辞 `shapechange/`。バケット名は、環境変数 `DEPLOY_GCS_BUCKET` か、配置済みのサービスの設定を引き継ぐ。署名付き URL（7 日間有効）で返す |
 | 入力画像 | 同じバケットの `shapechange/uploads/<日付>/`。`shapechange_create_upload_slot` の署名付き PUT URL（15 分有効）で受け取る。7 日で消す（下の「入力画像の置き場」） |
 | 改稿の起点 | 同じバケットの `shapechange/runs/<run_id>/`。実行の `run_meta.json` と完成画像を置く |
 | モデル | VM の `.env` と同じ値を [deploy/deploy_cloud_run.py](../deploy/deploy_cloud_run.py) の `ENV_VARS` に書いている |
@@ -21,7 +21,17 @@ GeneratorsAI との違いは 2 つ。GitHub Actions からの自動デプロイ�
 
 ## 公開範囲について
 
-自動承認の OAuth は利用者の本人確認をしない。URL を知っていれば、誰でも課金を伴う生成を呼べる（GeneratorsAI のコネクタも同じ）。GCS に残った中間画像の一覧と取得、Canva のトークンの更新も、同じように呼べる。URL は公開の場に書かない。このリポジトリの内容は公開リポジトリへ写すので、実際の URL とプロジェクト番号はここにも書かない。止める場合:
+コネクタの接続（OAuth の認可）は、合言葉の確認画面（`/consent`）を通す。合言葉は Secret Manager の `MCP_AUTH_PASSPHRASE` で、GeneratorsAI のコネクタと同じものを使う。合言葉が未設定のサーバーは接続をすべて断り、`MCP_ISSUER_URL` が無いサーバーは起動を断る。合言葉は 1 件の接続で 5 回まで、全体で 10 分に 10 回まちがえると、しばらく受け付けない。
+
+合言葉を知っている人は、課金を伴う生成、GCS に残った中間画像の一覧と取得、Canva のトークンの更新を呼べる。利用者ごとの本人確認はしない。合言葉を変えるときは、Secret Manager に新しい版を足して配置し直す（配置し直すと、発行済みのトークンも消える）。
+
+```sh
+# 合言葉を登録する（初回は create、変えるときは versions add）。値は標準入力で渡し、画面にもコマンドラインにも出さない
+gcloud secrets create MCP_AUTH_PASSPHRASE --data-file=-
+gcloud secrets versions add MCP_AUTH_PASSPHRASE --data-file=-
+```
+
+2026-11-21 までは自動承認の OAuth で、URL を知っていれば誰でも呼べた。このリポジトリは公開なので、実際の URL・プロジェクト ID・プロジェクト番号・バケット名はここにも書かない。止める場合:
 
 ```sh
 # 公開をやめる（サービスは残る。コネクタからは呼べなくなる）
@@ -45,16 +55,16 @@ python deploy/deploy_cloud_run.py                # ビルドして配置する
 - キャラクターデータ（`_creations-ai/ai-dataset` と `_creations-ai/creations-db/data`）。tar にまとめて送る
 - 形状データ。`vm_bundle` が書き出すシェーダーの 2 ファイルだけ
 
-`VRCShader_ShapeChange` のフォルダーや `.env` が混ざった場合、形状データが 2 ファイルでない場合は、送る前に止まる。送った内容は、プロジェクトの Cloud Build 用バケット（`run-sources-claude-radiannkswg-asia-northeast1`）に残る。
+`VRCShader_ShapeChange` のフォルダーや `.env` が混ざった場合、形状データが 2 ファイルでない場合は、送る前に止まる。送った内容は、プロジェクトの Cloud Build 用バケット（`run-sources-<PROJECT_ID>-asia-northeast1`）に残る。
 
 ## 入力画像の置き場
 
 入力画像は、バケットのライフサイクルで 7 日後に消す。この設定はバケットに 1 回入れればよく、配置のたびには要らない。2026-11-20 に、下のルールを入れた（それまでライフサイクルの設定は無かった）。
 
-`generators-ai-outputs` は GeneratorsAI と共用で、`--lifecycle-file` はバケットの設定を丸ごと置き換える。ルールを足すときは、先にいまの設定を読み、既存のルールを残したまま足す。
+バケットは GeneratorsAI と共用で、`--lifecycle-file` はバケットの設定を丸ごと置き換える。ルールを足すときは、先にいまの設定を読み、既存のルールを残したまま足す。
 
 ```sh
-gcloud storage buckets describe gs://generators-ai-outputs --format="json(lifecycle_config)"
+gcloud storage buckets describe gs://<BUCKET> --format="json(lifecycle_config)"
 ```
 
 ```json
@@ -62,7 +72,7 @@ gcloud storage buckets describe gs://generators-ai-outputs --format="json(lifecy
 ```
 
 ```sh
-gcloud storage buckets update gs://generators-ai-outputs --lifecycle-file=<ルールを足した JSON>
+gcloud storage buckets update gs://<BUCKET> --lifecycle-file=<ルールを足した JSON>
 ```
 
 Cloud Run のサービスアカウントには、読み取り用の署名付き URL と同じ権限（オブジェクトの作成と読み取り、自分自身の `iam.serviceAccounts.signBlob`）があれば足りる。署名付き PUT URL には、形式（`Content-Type`）と大きさの上限（`x-goog-content-length-range`、10MB）を含めている。実際の GCS へのアップロードは、配置してから確かめる（2026-11-20 の時点では、偽の GCS でしか確かめていない）。
@@ -76,7 +86,7 @@ Canva 仕上げを Cloud Run でも行う場合の手順。連携の作成とト
 1. PC でトークンを取得したあと、`.env` の `SHAPECHANGE_CANVA_*` 4 件を Secret Manager へ登録する。無いシークレットは作り、有るものには新しい版を足す。値は標準入力で渡すので、画面にもコマンドラインにも出ない。
 
    ```sh
-   python -m src.tools.refresh_canva_token --push-secrets claude-radiannkswg
+   python -m src.tools.refresh_canva_token --push-secrets <PROJECT_ID>
    ```
 
 2. 上の「配置と更新」のコマンドで配置し直す。4 件がそろっていれば「Canva の連携（SHAPECHANGE_CANVA_*）を渡します。」と表示される。
@@ -87,7 +97,7 @@ Cloud Run は、インスタンスの起動時に Secret Manager の最新版を
 ## コネクタの登録
 
 1. claude.ai の「Customize」→「Connectors」で「Add custom connector」を選ぶ。
-2. URL に、上の表の URL の末尾へ `/mcp` を付けたものを入れて追加する。
+2. URL に、上の表の URL の末尾へ `/mcp` を付けたものを入れて追加する。接続の途中で合言葉の確認画面が開くので、`MCP_AUTH_PASSPHRASE` の値を入力する（配置し直したあとの再サインインでも同じ）。
 3. 会話の「+」→「Connectors」で有効にする。`shapechange_` で始まるツールが 14 件見える。
 
 2026-11-18 の配置では、登録と同じ手順（OAuth の登録・認可・トークン取得）を PC から行い、ツール一覧・形状一覧・キャラクター一覧が返ることまで確かめた。Cloud Run からの生成と Drive 保存、claude.ai への登録は未確認。

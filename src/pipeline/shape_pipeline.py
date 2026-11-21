@@ -49,7 +49,7 @@ from ..utils.paths import build_run_dir, default_output_base, git_commit, projec
 from ..utils.provider import GenerationResult, ProviderError
 from ..utils.run_log import finalize_run_logs, initialize_run_logs
 from . import input_images
-from .correction_generator import correct_roughs
+from .correction_generator import correct_roughs, inspect_joint_mixing
 from .design_reference import Confirm, ReferenceCancelled, Vision, observation_block, observe_design
 from .final_generator import JOINT_HEADER, SINGLE_HEADER, generate_finals, rough_reference
 from .input_images import for_stage
@@ -330,8 +330,14 @@ class Plan:
 
 
 def _joint_references(plan: Plan) -> list[dict[str, Any]]:
-    """合同の 1 枚に添付する、入力画像と各キャラクターの公式画像 1 枚ずつ。"""
-    return plan.shared_references + [ref for subject in plan.subjects for ref in subject.references[:1]]
+    """合同の 1 枚に添付する、入力画像と各キャラクターの公式画像 1 枚ずつ。
+
+    公式画像の役割には、誰の画像かを書く（持ち主の分からない画像から、識別記号が別のキャラクターへ写るのを防ぐ）。
+    """
+    return plan.shared_references + [
+        {**ref, "role": f"{ref['role']}（{subject.character['name_ja']}）"}
+        for subject in plan.subjects for ref in subject.references[:1]
+    ]
 
 
 def _build_joint_prompt(plan: Plan, references: list[dict[str, Any]],
@@ -699,6 +705,14 @@ def execute(
         errors.append(f"完成画像が {args.count - len(finals)} 枚足りません。")
     stages["stage5"] = {"synth": _relative(stage5["synth"], run_dir),
                         "canva": _relative(stage5["canva"], run_dir), "notes": stage5["notes"]}
+    if plan.joint:      # 1 体ずつの検査（Stage 4）では見つけられない、キャラクターどうしの取り違えを見る
+        characters = [subject.character for subject in plan.subjects]
+        mixing = {image.name: inspect_joint_mixing(image, characters, vision) for image in stage5["synth"]}
+        for name, inspection in mixing.items():
+            if inspection["mixed"]:
+                print(f"[WARN] Stage 5: {name} で識別記号の取り違えが見つかりました: "
+                      f"{' / '.join(inspection['mixed'])}")
+        stages["stage5"]["mixing"] = summary["mixing"] = mixing
     return finish("partial" if errors else "ok", finals, errors,
                   {"model": model, "api_mode": api_mode, "stages": stages,
                    "design_observations": {subject.key: block for subject, block, _, _ in best if block}})
