@@ -35,8 +35,8 @@ RETRY_HEADER = (
     "前回の清書で、次の問題が見つかりました。これを解消して、最初から清書し直してください。\n"
 )
 
-#: 清書した 1 枚を見て、やり直しが要る指摘（形状の崩れ）を返す関数。
-Review = Callable[[Path], list[str]]
+#: 完成画像を見て、やり直しが要る指摘（形状の崩れ）を返す関数。
+Review = Callable[[Path], list[str] | None]
 
 
 def rough_reference(path: Path, role: str = "検査を通ったラフ") -> dict[str, Any]:
@@ -61,9 +61,9 @@ def generate_finals(
 ) -> dict[str, Any]:
     """``{"synth", "canva", "all", "notes", "retries"}`` を返す。``all`` が最終的な完成画像。
 
-    ``review`` を渡すと、清書した 1 枚ごとに呼び、指摘が返った清書を 1 回だけやり直す。やり直した絵の指摘が
-    減ったときだけ、そちらを完成画像にする（2026-11-21 の 58 のカードで、同じ指定でも清書ごとに
-    「体がカードになった絵」と「絵の描かれたカード」に分かれた）。
+    ``review`` を渡すと、完成画像ごとに呼び、指摘が返った清書を 1 回だけやり直す。フォールバック画像も検査するが、
+    自動のやり直しは行わない。やり直した絵の指摘が減ったときだけ、そちらを完成画像にする（2026-11-21 の 58 のカードで、
+    同じ指定でも清書ごとに「体がカードになった絵」と「絵の描かれたカード」に分かれた）。
     """
     stage_dir.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
@@ -84,9 +84,9 @@ def generate_finals(
             shutil.copyfile(source, target)
             synth.append(target)
 
-    for index, image in enumerate(list(synth) if review and drawn else []):
+    for index, image in enumerate(list(synth) if review else []):
         issues = review(image)
-        if not issues:
+        if not issues or not drawn:
             continue
         entry: dict[str, Any] = {"from": image.name, "reason": issues, "kept": image.name}
         retries.append(entry)
@@ -101,7 +101,8 @@ def generate_finals(
             notes.append(f"清書のやり直しに失敗したため、最初の清書を使います（{image.name}）: {err}")
             continue
         entry["to"] = redo.name
-        if len(review(redo)) < len(issues):
+        redo_issues = review(redo)
+        if redo_issues is not None and len(redo_issues) < len(issues):
             synth[index] = redo
             entry["kept"] = redo.name
         notes.append(f"形状の指摘があったため清書をやり直しました（{image.name} → {redo.name}）。"

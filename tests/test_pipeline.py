@@ -326,6 +326,18 @@ def test_final_with_a_shape_issue_is_redrawn_once_and_the_better_one_is_kept():
     assert meta["results"] == [{"file": "stage5_final/mode04_NumberTales-57_01.png", "status": "ok"}]
     assert meta["stages"]["stage5"]["retries"][0]["kept"] == "mode04_NumberTales-57_01.png" and len(generator.calls) == 3
 
+    # やり直し画像を検査できなければ、未検査の画像へ差し替えない
+    generator, vision = _FakeGenerator(), _fake_vision([_OK, _OK, _OK])
+    vision.final = [bad, ProviderError("vision down")]
+    with tempfile.TemporaryDirectory() as tmp:
+        _run(["--badge", "57", "--mode", "4", "--out", tmp, "--skip-canva"], generate=generator, vision=vision)
+        (run_dir,) = Path(tmp).iterdir()
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+    assert meta["results"] == [{"file": "stage5_final/mode04_NumberTales-57_01.png", "status": "ok"}]
+    assert meta["stages"]["stage5"]["retries"][0]["kept"] == "mode04_NumberTales-57_01.png"
+    assert meta["stages"]["stage5"]["inspection"]["mode04_NumberTales-57_01_retry_01.png"]["skipped"] is True
+    assert len(generator.calls) == 3
+
     # 形状以外の指摘（蛇足など）だけなら、やり直さない。合同の清書もやり直さない
     plan = shape_pipeline.describe_plan(shape_pipeline.build_plan(shape_pipeline.parse_args(["--badge", "57", "--mode", "4"])))
     joint = shape_pipeline.describe_plan(shape_pipeline.build_plan(shape_pipeline.parse_args(["--joint", "85:0,73:3"])))
@@ -386,6 +398,7 @@ def test_observation_failure_needs_explicit_approval():
 def test_failed_inspection_and_failed_synthesis_are_recorded_not_hidden():
     generator = _FakeGenerator(fail_on="[清書の依頼]")
     vision = _fake_vision([ProviderError("vision down"), _OK])
+    vision.final = {**_OK, "shape_issues": ["輪郭が球でなく人型のまま"]}
     with tempfile.TemporaryDirectory() as tmp:
         code, _, _ = _run(["--badge", "57", "--mode", "4", "--out", tmp, "--rough-count", "2", "--skip-canva"],
                           generate=generator, vision=vision)
@@ -396,6 +409,10 @@ def test_failed_inspection_and_failed_synthesis_are_recorded_not_hidden():
     assert code == 0 and meta["status"] == "partial"
     assert log[0]["skipped"] is True and log[0]["action"] == "passed" and log[1]["skipped"] is False
     assert any("清書に失敗" in error for error in meta["errors"])
+    (name,) = meta["stages"]["stage5"]["inspection"]
+    assert name == "mode04_NumberTales-57_01.png"
+    assert meta["stages"]["stage5"]["inspection"][name]["shape_issues"]
+    assert len(generator.calls) == 2
 
 
 def test_joint_run_inspects_each_character_then_draws_them_together():

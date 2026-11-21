@@ -715,13 +715,13 @@ def execute(
         # 形状の指摘（「絵の描かれた板」など）が出た清書は、generate_finals が 1 回だけやり直す
         inspected: dict[str, dict[str, Any]] = {}
 
-        def review(image: Path) -> list[str]:
+        def review(image: Path) -> list[str] | None:
             found = inspect_final(image, character=first.character, spec=first.spec, layout=args.layout,
                                   amount=args.amount, design=design, references=rough_references, vision=vision)
             inspected[image.name] = found
             if found["skipped"]:
                 print(f"[WARN] Stage 5: {image.name} を検査できませんでした: {found.get('error', '')}")
-                return []
+                return None
             if final_issues(found):
                 print(f"[WARN] Stage 5: {image.name} の検査で指摘がありました: {' / '.join(final_issues(found))}")
             return found["shape_issues"]
