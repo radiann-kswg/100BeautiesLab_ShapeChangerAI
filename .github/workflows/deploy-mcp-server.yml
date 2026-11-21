@@ -1,0 +1,120 @@
+name: Deploy MCP Server to Cloud Run
+
+# main に入った変更を、Cloud Run の shapechanger-ai へ配置する（GeneratorsAI のコネクタと同じ流れ）。
+# 送る内容の組み立てと、配置の設定（環境変数・シークレット・インスタンス）は deploy/deploy_cloud_run.py が持つ。
+# 準備（リポジトリのシークレットと GCP 側の許可）は docs/deploy-cloud-run.md の「GitHub Actions からの配置」。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "requirements.txt"
+      - "requirements-mcp.txt"
+      - "Dockerfile"
+      - "deploy/deploy_cloud_run.py"
+      - ".github/workflows/deploy-mcp-server.yml"
+      - "_creations-ai"
+      - "VRCShader_ShapeChange"
+  workflow_dispatch:  # GitHub の画面から手動で実行できるようにする
+
+concurrency:
+  group: deploy-mcp-server
+  cancel-in-progress: false
+
+env:
+  # プロジェクト ID・コネクタの URL・バケット名は、リポジトリのシークレットから読む（公開リポジトリに書かない）
+  REGION: asia-northeast1
+  IMAGE: asia-northeast1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/numbertales-mcp/shapechanger-mcp
+
+jobs:
+  build-and-deploy:
+    name: Test, Build & Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # Workload Identity Federation に必要
+
+    steps:
+      # 未設定のまま進むと、認証に失敗するか、別のサービスの URL を issuer にした配置になる
+      - name: Check deploy settings
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          MCP_ISSUER_URL: ${{ secrets.MCP_ISSUER_URL }}
+          GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
+        run: |
+          for name in GCP_PROJECT_ID GCP_WIF_PROVIDER GCP_SERVICE_ACCOUNT MCP_ISSUER_URL GCS_BUCKET; do
+            if [ -z "${!name}" ]; then
+              echo "::error::リポジトリのシークレット ${name} が未設定です（docs/deploy-cloud-run.md の「GitHub Actions からの配置」）"
+              exit 1
+            fi
+          done
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive   # キャラクターデータ（_creations-ai）とシェーダー（VRCShader_ShapeChange）
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-mcp.txt
+
+      # 生成 API は呼ばない（キーを渡さず、完成画像は手元に置く）。失敗したら配置しない
+      - name: Run tests
+        env:
+          OUTPUT_SINK: local
+          PYTHONUTF8: "1"
+        run: |
+          pip install -r requirements-mcp.txt
+          for file in tests/test_*.py; do
+            echo "== ${file}"
+            echo n | python "${file}" > test.log 2>&1 || { tail -n 60 test.log; exit 1; }
+            tail -n 1 test.log
+          done
+
+      # 送る内容（コード・キャラクターデータ・シェーダーの 2 ファイル）を組み立てる。PC からの配置と同じ処理
+      - name: Stage the build context
+        run: python deploy/deploy_cloud_run.py --stage-dir "${RUNNER_TEMP}/stage"
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Docker login to Artifact Registry
+        run: |
+          echo "${{ steps.auth.outputs.access_token }}" \
+            | docker login \
+                --username oauth2accesstoken \
+                --password-stdin \
+                asia-northeast1-docker.pkg.dev
+
+      - name: Build and push Docker image
+        run: |
+          docker build --tag "${{ env.IMAGE }}:${{ github.sha }}" --tag "${{ env.IMAGE }}:latest" "${RUNNER_TEMP}/stage"
+          docker push "${{ env.IMAGE }}:${{ github.sha }}"
+          docker push "${{ env.IMAGE }}:latest"
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      # 環境変数・シークレット・インスタンスの設定は、PC からの配置と同じスクリプトが決める。
+      # コネクタの URL は公開のログに出さない（スクリプトが gcloud の出力を表示しない）
+      - name: Deploy to Cloud Run
+        env:
+          DEPLOY_GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          DEPLOY_ISSUER_URL: ${{ secrets.MCP_ISSUER_URL }}
+          DEPLOY_GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
+        run: python deploy/deploy_cloud_run.py --image "${{ env.IMAGE }}:${{ github.sha }}"
