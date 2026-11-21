@@ -117,10 +117,11 @@ def _keep_block(character: dict[str, Any], spec: dict[str, Any] | None = None) -
     lines = [
         "[変形後も維持する特徴（必須）]",
         "- 髪の色と髪型の特徴、瞳の色、顔立ち、衣装の色と柄を変えない。",
-        "- 耳の種類、尾の種類と本数、番号・紋章などの識別記号を変えず、数えられる形で残す。同じ記号を 2 か所以上に繰り返さない。",
+        "- 耳の種類、尾の種類と本数、番号・紋章などの識別記号を変えず、数えられる形で残す。重複は禁止するが、対象は各姿・各方向図の1体の内部に限る。別の姿・方向図には必要に応じて同じ記号を描く。",
         "Keep the hair colour, eye colour, facial features, outfit colours and patterns, ear type,"
-        " tail type and exact tail count, and any number markings or emblems unchanged and readable,"
-        " each drawn once.",
+        " tail type and exact tail count, and any number markings or emblems unchanged and readable."
+        " Duplicate markings are prohibited only within each individual figure in each state or view;"
+        " repeat the same marking in other states or views as needed.",
     ]
     lines += [f"- {item}" for item in character["immutable_constraints"]]
     return lines
@@ -351,7 +352,7 @@ def _closing_blocks(references: list[dict[str, Any]] | None, scene: str, style: 
         "- 画像内に説明文・ラベル・署名・透かしを入れない。",
         "- 場面や追加の指定に書かれていない小物・家具・別のキャラクターを描き足さない。",
         "All-ages, soft and toy-like; no pain, injury, gore or torn clothing. No captions or watermarks."
-        " Do not add props or extra characters that the scene does not ask for.",
+        " Do not add props, furniture, or extra characters unless requested in the scene or additional instructions.",
     ]
     if avoid:
         rules.append(f"- 混ぜない要素: {', '.join(avoid)}")

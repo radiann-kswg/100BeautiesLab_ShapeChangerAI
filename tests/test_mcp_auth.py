@@ -127,6 +127,8 @@ def test_consent_page_asks_for_the_passphrase_and_redirects_on_success():
         # 誰のアプリへ戻るのかを見せる（他人が用意した接続に合言葉を入れないため）
         assert "Test &lt;App&gt;" in shown.text and "<b>client.example</b>" in shown.text
         assert "テスト &lt;コネクタ&gt;" in shown.text and shown.headers["cache-control"] == "no-store"
+        oversized = http.post("/consent", content=b"x" * (auth.MAX_CONSENT_BODY_BYTES + 1))
+        assert oversized.status_code == 413
         assert http.get("/consent?rid=unknown").status_code == 400
         wrong = http.post("/consent", data={"rid": request_id, "passphrase": "wrong"})
         assert wrong.status_code == 401 and "open-sesame" not in wrong.text

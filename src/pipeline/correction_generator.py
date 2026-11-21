@@ -148,7 +148,8 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
         "逆なら「左右反転: 〜」、説明文・ラベル・透かしは「文字: 〜」として入れる。\n"
         "- missing: 識別特徴が無い、数が違う、位置が違う、色相が明らかに違う場合に"
         "「〜: 設定ではどうか」の形で入れる。尾は見えている本数を数え、設定の本数を確認できなければ入れる。"
-        "番号や紋章は位置と字形を確認し、同じものが 2 か所以上に描かれていれば「重複: 〜」として入れる。\n"
+        "番号や紋章は位置と字形を確認し、重複は 1 体の 1 つの姿または五方向図の 1 方向図の内部だけで判定する。"
+        "sequence の別の姿や五方向図の別方向図に同じ記号が描かれている場合は重複にしない。\n"
         "- composition_issues: 見切れ、体数の誤り、破綻した描写を入れる。\n"
         "- 指定どおりの変形（顔の拡大、衣装が面に沿う、手足の収納）は問題にしない。"
         "陰影による濃淡、ポーズや角度の違いも問題にしない。"
@@ -162,13 +163,13 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
     return "\n\n".join(part for part in parts if part)
 
 
-def inspect_joint_mixing(image: Path, characters: list[dict[str, Any]], vision: Vision) -> list[str]:
+def inspect_joint_mixing(image: Path, characters: list[dict[str, Any]], vision: Vision) -> dict[str, Any]:
     """合同の完成画像で、体数が合っているか、識別記号が持ち主以外のキャラクターに描かれていないかを見る。
 
-    見つけた取り違えを文のリストで返す。直しはしない（記録して、依頼者に見せる）。Vision が失敗したら空。
+    見つけた取り違えと検査状態を返す。直しはしない（記録して、依頼者に見せる）。
     """
     listed = "\n".join(
-        f"- {character['name_ja']}: " + (" / ".join(character["appearance_details"][:8]) or "（文字の設定資料なし）")
+        f"- {character['name_ja']}: " + (" / ".join(character["appearance_details"]) or "（文字の設定資料なし）")
         for character in characters
     )
     prompt = (
@@ -185,9 +186,10 @@ def inspect_joint_mixing(image: Path, characters: list[dict[str, Any]], vision: 
         raw = vision(prompt, [("検査対象の完成画像", image)])
     except ProviderError as err:
         print(f"[WARN] Stage 5: {image.name} の取り違えの検査に失敗しました: {err}")
-        return []
+        return {"mixed": [], "skipped": True, "error": str(err)}
     found = raw.get("mixed")
-    return [str(item) for item in found if item] if isinstance(found, list) else []
+    return {"mixed": [str(item) for item in found if item] if isinstance(found, list) else [],
+            "skipped": False}
 
 
 _MEASURE_PROMPT = (

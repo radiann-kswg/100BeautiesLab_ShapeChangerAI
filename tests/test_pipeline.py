@@ -18,7 +18,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from src.pipeline import shape_pipeline  # noqa: E402
+from src.pipeline import correction_generator, prompt_builder, shape_pipeline  # noqa: E402
 from src.shape.vrc_source import shapechange_root  # noqa: E402
 from src.utils.provider import GenerationResult, ProviderError  # noqa: E402
 
@@ -55,6 +55,45 @@ def test_layouts_and_midway_change_the_composition():
     assert "変形量 約 50%" in midway and "まだ完成形にはしない" in midway
     code, _, err = _run(["--badge", "57", "--mode", "0", "--amount", "0.5", "--layout", "sequence", "--dry-run"])
     assert code == 2 and "--amount" in err          # argparse の使い方エラー
+
+
+def test_prompts_limit_duplicate_markings_per_view_and_allow_requested_props():
+    keep = "\n".join(prompt_builder._keep_block({"immutable_constraints": []}))
+    assert "対象は各姿・各方向図の1体の内部に限る" in keep
+    assert "within each individual figure in each state or view" in keep
+    assert "each drawn once" not in keep
+
+    closing = "\n".join("\n".join(block) for block in
+                        prompt_builder._closing_blocks(None, "", "", "赤いりんごを持つ", None, []))
+    assert "赤いりんごを持つ" in closing
+    assert "unless requested in the scene or additional instructions" in closing
+
+
+def test_duplicate_inspection_is_scoped_to_each_figure_or_view_and_includes_all_details():
+    inspection = correction_generator._inspection_prompt(
+        {"name_ja": "test", "appearance_details": [], "tails": [], "palette": []},
+        {"kind": "mode", "name_ja": "test shape", "silhouette_ja": "shape", "face_ja": "face",
+         "surface_ja": "surface", "dimensions": {"width": 1.0, "height": 1.0, "depth": 1.0},
+         "limbs": {"arms": None, "legs": None}, "appendages": "none"},
+        "five-view", 1.0, {}, False)
+    assert "1 方向図の内部だけで判定する" in inspection
+    assert "別方向図に同じ記号が描かれている場合は重複にしない" in inspection
+
+    details = [f"detail-{index}" for index in range(10)]
+    seen = []
+
+    def vision(prompt, images):
+        seen.append(prompt)
+        return {"mixed": []}
+
+    result = correction_generator.inspect_joint_mixing(
+        Path("joint.png"), [{"name_ja": "test", "appearance_details": details}], vision)
+    assert result == {"mixed": [], "skipped": False}
+    assert all(detail in seen[0] for detail in details)
+    failed = correction_generator.inspect_joint_mixing(
+        Path("joint.png"), [{"name_ja": "test", "appearance_details": details}],
+        lambda *_: (_ for _ in ()).throw(ProviderError("vision down")))
+    assert failed == {"mixed": [], "skipped": True, "error": "vision down"}
 
 
 def test_refused_character_stops_before_generation():
@@ -158,6 +197,8 @@ def _fake_vision(inspections, observation=None):
         if "見えているとおりに数えて" in text:      # 設定を知らせない計数。判定の直後に、同じラフについて呼ばれる
             return vision.measurements.pop(0)
         if '"mixed"' in text:                      # 合同の完成画像の、識別記号の取り違えの検査
+            if isinstance(vision.mixing, Exception):
+                raise vision.mixing
             return vision.mixing
         outcome = queue.pop(0)
         if isinstance(outcome, Exception):
@@ -289,7 +330,8 @@ def test_joint_run_inspects_each_character_then_draws_them_together():
     # 公式画像にも持ち主の名前を付け、完成画像では識別記号の取り違えを見て記録する（直しはしない）
     assert [ref["role"][-9:] for ref in final["references"][2:]] == ["（85(ハッコ)）", "（73(ナトミ)）"]
     assert "持ち主のキャラクターにだけ描きます" in prompt
-    assert meta["stages"]["stage5"]["mixing"] == {"joint_01.png": ["73(ナトミ) に 85(ハッコ) の番号"]}
+    assert meta["stages"]["stage5"]["mixing"] == {
+        "joint_01.png": {"mixed": ["73(ナトミ) に 85(ハッコ) の番号"], "skipped": False}}
     assert vision.seen[-1]["labels"] == ["検査対象の完成画像"] and "85(ハッコ)" in vision.seen[-1]["text"]
     for expected in ("1 体目: 85(ハッコ)", "2 体目: 73(ナトミ)", "Mode 00 立方体", "Mode 03 膨体", "公園の芝生", "同じ縮尺"):
         assert expected in prompt, expected

@@ -707,10 +707,11 @@ def execute(
                         "canva": _relative(stage5["canva"], run_dir), "notes": stage5["notes"]}
     if plan.joint:      # 1 体ずつの検査（Stage 4）では見つけられない、キャラクターどうしの取り違えを見る
         characters = [subject.character for subject in plan.subjects]
-        mixing = {image.name: found for image in stage5["synth"]
-                  if (found := inspect_joint_mixing(image, characters, vision))}
-        for name, found in mixing.items():
-            print(f"[WARN] Stage 5: {name} で識別記号の取り違えが見つかりました: {' / '.join(found)}")
+        mixing = {image.name: inspect_joint_mixing(image, characters, vision) for image in stage5["synth"]}
+        for name, inspection in mixing.items():
+            if inspection["mixed"]:
+                print(f"[WARN] Stage 5: {name} で識別記号の取り違えが見つかりました: "
+                      f"{' / '.join(inspection['mixed'])}")
         stages["stage5"]["mixing"] = summary["mixing"] = mixing
     return finish("partial" if errors else "ok", finals, errors,
                   {"model": model, "api_mode": api_mode, "stages": stages,

@@ -35,6 +35,7 @@ MAX_PENDING = 200          # 同時に待たせる認可リクエストの数。
 MAX_ATTEMPTS = 5           # 1 件の認可リクエストで合言葉を試せる回数
 LOCKOUT_FAILURES = 10      # LOCKOUT_WINDOW 秒のあいだにこの回数まちがえたら、全体をしばらく止める
 LOCKOUT_WINDOW = 600
+MAX_CONSENT_BODY_BYTES = 4096
 
 
 @dataclass
@@ -264,7 +265,12 @@ def register_consent_route(mcp, provider: SimpleOAuthProvider, title: str = "MCP
         if request.method == "GET":
             request_id = request.query_params.get("rid", "")
             return form(request_id) if provider.is_pending(request_id) else page(expired, 400)
-        fields = parse_qs((await request.body()).decode("utf-8", errors="replace"))
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_CONSENT_BODY_BYTES:
+                return page("<p>フォームの内容が大きすぎます。</p>", 413)
+            body.extend(chunk)
+        fields = parse_qs(body.decode("utf-8", errors="replace"))
         request_id = (fields.get("rid") or [""])[0]
         if provider.locked_out():
             return page("<p>合言葉のまちがいが続いたため、しばらく受け付けません。10 分ほど待ってからやり直してください。</p>", 429)
