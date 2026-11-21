@@ -346,7 +346,7 @@ def test_connector_dry_run_returns_the_prompt_and_the_images_with_their_roles():
             {"object_key": "numbertales/x.png", "role": "base", "provenance": "own_work"}]}))
         refused = tools.dry_run(tools.build_argv({"name": "四春", "mode": 4}))
         assert not list(Path(tmp).iterdir())
-    assert plan["status"] == "dry_run" and plan["pipeline"] == "five-stage" and plan["max_generated_images"] == 7
+    assert plan["status"] == "dry_run" and plan["pipeline"] == "five-stage" and plan["max_generated_images"] == 8
     (image,) = plan["input_images"]
     assert (image["role"], image["stages"], image["grayscale"], image["source"]) == (
         "composition", [3], True, {"object_key": key})

@@ -330,7 +330,8 @@ class Plan:
         """この実行で生成しうる画像の枚数の上限（ラフ + その修正 + 完成）。"""
         if self.args.quick:
             return self.args.count
-        return len(self.subjects) * self.rough_count * 2 + self.args.count
+        # 1 体の清書は、検査で形状の指摘が出たら 1 回だけやり直す
+        return len(self.subjects) * self.rough_count * 2 + self.args.count * (1 if self.joint else 2)
 
     @property
     def rough_count(self) -> int:
@@ -507,7 +508,9 @@ def build_plan(args: argparse.Namespace, argv: list[str] | None = None, *,
                     mode, source, height_cm=character["height_cm"], size=args.size,
                     arms=args.arms, legs=args.legs, appendages=args.appendages,
                 )
-            cue_rules.apply(spec, args.composition, getattr(args, "cue_list", None), args.cue_note)
+            cue_rules.apply(spec, args.composition, getattr(args, "cue_list", None), args.cue_note,
+                            # 合同の 1 体ずつのラフは場面なしで描くので、検査にも場面を渡さない
+                            requested="" if args.joint else " / ".join(t for t in (args.scene, args.extra) if t))
             official = [] if args.no_refs else dataset.collect_reference_images(record, character["form"])
             if args.joint:       # 1 体ずつのラフは場面なしで描き、場面と入力画像は合同の清書で使う
                 references = official
@@ -708,12 +711,27 @@ def execute(
                      + (f"Object {first.spec['name_ja']}" if is_object(first.spec) else f"Mode {first.spec['mode']:02d}"))
         (run_dir / "prompt.txt").write_text(final_prompt, encoding="utf-8")
 
+        # 清書で入った破綻は、ラフの検査（Stage 4）では見つけられない。1 体の清書は、ラフと同じ観点で検査して記録する。
+        # 形状の指摘（「絵の描かれた板」など）が出た清書は、generate_finals が 1 回だけやり直す
+        inspected: dict[str, dict[str, Any]] = {}
+
+        def review(image: Path) -> list[str] | None:
+            found = inspect_final(image, character=first.character, spec=first.spec, layout=args.layout,
+                                  amount=args.amount, design=design, references=rough_references, vision=vision)
+            inspected[image.name] = found
+            if found["skipped"]:
+                print(f"[WARN] Stage 5: {image.name} を検査できませんでした: {found.get('error', '')}")
+                return None
+            if final_issues(found):
+                print(f"[WARN] Stage 5: {image.name} の検査で指摘がありました: {' / '.join(final_issues(found))}")
+            return found["shape_issues"]
+
         print(f"[INFO] Stage 5: 完成画像を {args.count} 枚清書します。")
         stage5 = generate_finals(
             roughs, header=header, prompt=final_prompt, references=references,
             stage_dir=run_dir / "stage5_final", stem=stem, aspect=plan.aspect, count=args.count,
             generator=generator, skip_canva=args.skip_canva, title=title,
-            fallback_to_rough=not plan.joint,
+            fallback_to_rough=not plan.joint, review=None if plan.joint else review,
         )
     except ReferenceCancelled as err:
         return finish("cancelled", [], [str(err)], {})
@@ -735,18 +753,10 @@ def execute(
                 print(f"[WARN] Stage 5: {name} で識別記号の取り違えが見つかりました: "
                       f"{' / '.join(inspection['mixed'])}")
         stages["stage5"]["mixing"] = summary["mixing"] = mixing
-    else:               # 清書で入った破綻は、ラフの検査（Stage 4）では見つけられない。直さずに記録して、依頼者に見せる
-        inspection = {
-            image.name: inspect_final(image, character=first.character, spec=first.spec, layout=args.layout,
-                                      amount=args.amount, design=design, references=rough_references, vision=vision)
-            for image in stage5["synth"]
-        }
-        for name, found in inspection.items():
-            if found["skipped"]:
-                print(f"[WARN] Stage 5: {name} を検査できませんでした: {found.get('error', '')}")
-            elif final_issues(found):
-                print(f"[WARN] Stage 5: {name} の検査で指摘がありました: {' / '.join(final_issues(found))}")
-        stages["stage5"]["inspection"] = summary["final_inspection"] = inspection
+    else:
+        stages["stage5"]["inspection"] = summary["final_inspection"] = inspected
+        if stage5["retries"]:
+            stages["stage5"]["retries"] = summary["final_retries"] = stage5["retries"]
     return finish("partial" if errors else "ok", finals, errors,
                   {"model": model, "api_mode": api_mode, "stages": stages,
                    "design_observations": {subject.key: block for subject, block, _, _ in best if block}})
