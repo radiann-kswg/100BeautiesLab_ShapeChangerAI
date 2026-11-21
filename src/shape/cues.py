@@ -52,8 +52,11 @@ def apply(spec: dict[str, Any], composition: str = "showcase", cues: list[str] |
     """形状仕様に、構図と手がかりを書き足して返す。"""
     if composition not in COMPOSITIONS:
         raise ValueError(f"composition は {COMPOSITIONS} のいずれか: {composition}")
+    selected = list(cues) if cues else default_cues(spec)
+    if (spec.get("face") or {}).get("mode") == "none" and "face" in selected:
+        raise ValueError("--face none と --cues face は同時に指定できません。")
     spec["composition"] = composition
-    spec["cues"] = list(cues) if cues else default_cues(spec)
+    spec["cues"] = selected
     spec["cue_note"] = " ".join(note.split())
     return spec
 

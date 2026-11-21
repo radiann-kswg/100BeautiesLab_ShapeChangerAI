@@ -109,6 +109,15 @@ def _object_inspection_prompt(character: dict[str, Any], spec: dict[str, Any], d
     ]
     face_rule = ("顔が無い、顔立ちや瞳の色が公式画像と違う場合は「顔: 〜」" if face == "keep"
                  else "顔が描かれていれば「顔: 描かない指定」")
+    check_tail = not cue_rules.is_scene(spec) or cue_rules.has(spec, "tail")
+    appendage_rule = "耳や尾" if check_tail else "耳"
+    appendage_rule += "の種類・本数が設定と違う場合に「〜: 設定ではどうか」の形で入れる。"
+    if not check_tail:
+        appendage_rule += "尾の本数は、手がかりに選んでいないので確認しない。"
+    composition_rule = (
+        "見切れ、破綻した描写を入れる。場面の周囲にある物の個数は問題にしない。"
+        if cue_rules.is_scene(spec) else "見切れ、物が 2 つ以上描かれている、破綻した描写を入れる。"
+    )
     parts = [
         f"あなたはイラストの検査係です。1 枚目の画像は、{character['name_ja']} が"
         f"「{name}」という物になった姿（物品化）として生成されたラフです。{_layout_note(spec, 'single')}",
@@ -128,9 +137,9 @@ def _object_inspection_prompt(character: dict[str, Any], spec: dict[str, Any], d
            if has_object_image else "") + "\n"
         "- missing: "
         + ("番号や紋章が物の表面に無い、位置や字形が違う場合と、" if cue_rules.has(spec, "number") else "")
-        + "耳や尾の種類・本数が設定と違う場合に"
-        "「〜: 設定ではどうか」の形で入れる。同じ番号や紋章が 2 か所以上に描かれていれば「重複: 〜」として入れる。\n"
-        "- composition_issues: 見切れ、物が 2 つ以上描かれている、破綻した描写を入れる。\n"
+        + appendage_rule
+        + "同じ番号や紋章が 2 か所以上に描かれていれば「重複: 〜」として入れる。\n"
+        "- composition_issues: " + composition_rule + "\n"
         "- 指定どおりの変化（体が物の形になる、衣装が色と柄として表面に移る、手足の収納）は問題にしない。"
         "物の素材感（ビニール、布、陶器、木など）、陰影による濃淡、角度の違いも問題にしない。"
         + ("\n- 公式画像は、キャラクターの外見（配色・模様・顔立ち）の照合に使う。" if has_official else "")
@@ -167,6 +176,14 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
     shape.append(f"- 寸法（変形前の身長を 1 とした比）: {size}")
     if amount < 1.0:
         shape.append(f"- この絵は変形の途中（変形量 約 {round(amount * 100)}%）: {spec['midway_ja']}")
+    check_tail = not cue_rules.is_scene(spec) or cue_rules.has(spec, "tail")
+    tail_rule = "尾は見えている本数を数え、設定の本数を確認できなければ入れる。" if check_tail else (
+        "尾は手がかりに選んでいないので、本数を確認しない。"
+    )
+    composition_rule = (
+        "見切れ、破綻した描写を入れる。場面の周囲にある物の個数は問題にしない。"
+        if cue_rules.is_scene(spec) else "見切れ、体数の誤り、破綻した描写を入れる。"
+    )
 
     identity = _identity_lines(character)
 
@@ -185,10 +202,10 @@ def _inspection_prompt(character: dict[str, Any], spec: dict[str, Any], layout: 
         "- violations: 設定に無い装飾や部位の描き足しは「蛇足: 〜」、左右で異なる要素が公式画像と"
         "逆なら「左右反転: 〜」、説明文・ラベル・透かしは「文字: 〜」として入れる。\n"
         "- missing: 識別特徴が無い、数が違う、位置が違う、色相が明らかに違う場合に"
-        "「〜: 設定ではどうか」の形で入れる。尾は見えている本数を数え、設定の本数を確認できなければ入れる。"
+        f"「〜: 設定ではどうか」の形で入れる。{tail_rule}"
         + ("番号や紋章は位置と字形を確認し、" if cue_rules.has(spec, "number") else "") + "重複は 1 体の 1 つの姿または五方向図の 1 方向図の内部だけで判定する。"
         "sequence の別の姿や五方向図の別方向図に同じ記号が描かれている場合は重複にしない。\n"
-        "- composition_issues: 見切れ、体数の誤り、破綻した描写を入れる。\n"
+        "- composition_issues: " + composition_rule + "\n"
         "- 指定どおりの変形（顔の拡大、衣装が面に沿う、手足の収納）は問題にしない。"
         "陰影による濃淡、ポーズや角度の違いも問題にしない。"
         + ("\n- 2 枚目以降は公式画像。キャラクターの外見はこれと照合する。" if has_official else "")

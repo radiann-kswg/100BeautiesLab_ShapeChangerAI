@@ -29,6 +29,12 @@ def test_default_cues_follow_the_shape_and_never_include_the_number():
     sofa = build_object_spec("ソファ")
     assert cues.default_cues(sofa) == ["face", "palette", "ears", "tail"]
     assert cues.default_cues(build_object_spec("ソファ", face="none", appendages="integrate")) == ["palette"]
+    try:
+        cues.apply(build_object_spec("ソファ", face="none"), cues=["face"])
+    except ValueError as err:
+        assert "--face none" in str(err) and "--cues face" in str(err)
+    else:
+        raise AssertionError("顔を描かない指定と face の手がかりを同時に受け付けた")
     assert cues.parse_cues(" face, number ,face ") == ["face", "number"]
     try:
         cues.parse_cues("face,nose")
@@ -105,6 +111,8 @@ def test_inspection_reads_the_same_cues_and_allows_overlap_in_a_scene():
                      "番号・紋章は、この絵の手がかりではない", "「番号: 〜」", "「取り違え: 〜」", "「体数: 〜」",
                      "輪郭の 3 分の 1 くらいまで隠れていても", "手がかりに選んでいない特徴"):
         assert expected in inspection, expected
+    assert "尾は見えている本数を数え" not in inspection
+    assert "体数の誤り" not in inspection
     # 番号を手がかりに選んでいない検査では、番号の位置と字形を確かめさせない（2026-11-21 の 58 のカードで、
     # 選んでいない番号が「手がかり: 番号が見えない」と指摘された）
     assert "番号や紋章は位置と字形を確認し" not in inspection
@@ -112,6 +120,24 @@ def test_inspection_reads_the_same_cues_and_allows_overlap_in_a_scene():
     assert log[0]["action"] == "passed" and log[0]["missing"] == [] and log[0]["composition_issues"] == []
     assert meta["composition"] == "scene"
     assert meta["subjects"][0]["shape"]["composition"] == "scene" and meta["subjects"][0]["shape"]["cues"] == ["face", "palette"]
+
+
+def test_object_inspection_does_not_count_scene_objects_or_unselected_tails():
+    character = {"name_ja": "テスト", "appearance_details": [], "tails": [], "palette": []}
+    spec = cues.apply(build_object_spec("ソファ"), "scene", ["face", "palette"])
+    inspection = correction_generator._object_inspection_prompt(character, spec, {}, False, False, False)
+    assert "場面の周囲にある物の個数は問題にしない" in inspection
+    assert "物が 2 つ以上描かれている" not in inspection
+    assert "尾の本数は、手がかりに選んでいないので確認しない" in inspection
+
+    spec = cues.apply(build_object_spec("ソファ"), "scene", ["face", "tail"])
+    inspection = correction_generator._object_inspection_prompt(character, spec, {}, False, False, False)
+    assert "尾の種類・本数が設定と違う場合" in inspection
+    assert "尾の本数は、手がかりに選んでいないので確認しない" not in inspection
+
+    spec = cues.apply(build_object_spec("ソファ"), "showcase", ["face", "palette"])
+    inspection = correction_generator._object_inspection_prompt(character, spec, {}, False, False, False)
+    assert "耳や尾の種類・本数が設定と違う場合" in inspection
 
 
 def test_measured_counts_respect_the_scene_and_the_tail_cue():
