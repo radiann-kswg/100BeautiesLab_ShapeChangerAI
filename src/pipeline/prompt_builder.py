@@ -108,10 +108,14 @@ def _number_rule(spec: dict[str, Any] | None, surface: str) -> tuple[str, str]:
     if cue_rules.has(spec, "number"):
         return (f"- 番号・紋章を、{surface}の読める位置に、設定の字形のまま残す。",
                 "Keep the number marking and emblems readable on the surface, in their original glyph shapes.")
-    return ("- 番号・紋章は、設定の位置・大きさ・個数のまま扱う。設定で服や髪の陰に隠れているものを、"
-            "目立つ場所へ移したり大きくしたりしない。描く場合も、変形前の姿で体に対して占めていた大きさの比を超えない。",
-            "Keep number markings and emblems at their original position, size and count; never move a hidden"
-            " marking somewhere prominent or enlarge it.")
+    return ("- 番号・紋章は、設定の位置・大きさ・個数のまま扱う。設定で「隠れている・ふだん見えない」とされる番号は描かない。"
+            "設定で見えている番号は、設定の位置に 1 つだけ、変形前の姿で体に対して占めていた大きさの比のまま描く。"
+            "目立つ場所へ移したり、大きくしたり、2 か所に描いたりしない。参照画像の題字（名前の横の大きな番号）は写さない。",
+            "Keep number markings and emblems at their original position, size and count. Do not draw a marking"
+            " the design describes as hidden or normally not visible. Draw a visible one once, at its original"
+            " place and at the share of the body it had before the transformation; never move it somewhere"
+            " prominent, enlarge it or repeat it. Do not copy the large title number next to the name on the"
+            " reference sheet.")
 
 
 def _keep_block(character: dict[str, Any], spec: dict[str, Any] | None = None) -> list[str]:

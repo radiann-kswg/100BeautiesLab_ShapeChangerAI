@@ -50,7 +50,10 @@ def test_default_cues_follow_the_shape_and_never_include_the_number():
 
 def test_number_stays_at_its_original_place_unless_it_is_a_chosen_cue():
     _, plain, _ = _run(["--badge", "58", "--mode", "14", "--dry-run"])
-    assert "番号・紋章は、設定の位置・大きさ・個数のまま扱う" in plain and "目立つ場所へ移したり大きくしたりしない" in plain
+    assert "番号・紋章は、設定の位置・大きさ・個数のまま扱う" in plain
+    # 2026-11-21 の 58 のカードで、設定では隠れている「58」が大きく 2 か所に描かれた
+    for expected in ("「隠れている・ふだん見えない」とされる番号は描かない", "2 か所に描いたりしない", "題字（名前の横の大きな番号）は写さない"):
+        assert expected in plain, expected
     assert "手がかり: 顔（顔立ちと瞳の色）、配色（髪・肌・衣装の色と柄）。" in plain    # 板になる形は、耳と尾が面の絵柄になる
     _, chosen, _ = _run(["--badge", "58", "--mode", "14", "--cues", "face,number", "--cue-note", "茶色の長い髪",
                          "--dry-run"])
